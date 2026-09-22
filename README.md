@@ -1,6 +1,15 @@
 # mac-docling-std-nano
 
-Conversion locale de PDF et d'images en Markdown, sur Mac Apple Silicon.
+**Un OCR pour documents sensibles.** Conversion de PDF et d'images en
+Markdown sur Mac Apple Silicon, entièrement hors ligne : aucune donnée, aucun
+extrait de texte, aucune métadonnée ne sort de la machine. Pas de service
+d'OCR en ligne, pas d'API, pas de téléversement — donc rien à faire valider
+par un DPO, et des pièces comptables, dossiers médicaux, contrats ou fiches de
+paie qui restent là où ils sont.
+
+Le moteur est **[Docling](https://github.com/docling-project/docling) 2.129**,
+la bibliothèque d'analyse documentaire d'IBM Research, utilisée ici dans ses
+deux pipelines et sans aucun de ses connecteurs distants.
 
 Le document est découpé page par page. Chaque page passe au pipeline Docling
 standard avec l'OCR Apple Vision en français et reçoit une note de confiance ;
@@ -10,7 +19,24 @@ en-têtes et pieds de page répétés sont retirés avant l'assemblage final.
 L'interface affiche une barre d'avancement, le temps de chaque étape, la note
 de chaque page et les bascules, au fil de l'eau.
 
-**Rien ne quitte la machine.** Voir la section Confidentialité.
+## Ce qui fait tourner tout ça
+
+| Composant | Version | Rôle |
+|-----------|---------|------|
+| [`docling`](https://github.com/docling-project/docling) | 2.129.0 | orchestration des deux pipelines, notes de confiance, export Markdown |
+| `docling-core` | 2.98.0 | modèle de document et sérialisation |
+| `docling-ibm-models` | 4.0.3 | modèles de mise en page et TableFormer |
+| `docling-parse` | 7.21.0 | lecture bas niveau des PDF |
+| `ocrmac` | 1.0.1 | pont vers Apple Vision, l'OCR fourni avec macOS |
+| `mlx` / `mlx-vlm` | 0.32.2 / 0.7.2 | exécution de Nanonets-OCR2 sur le GPU Apple |
+| `gradio` | 6.28.0 | interface web, servie sur la boucle locale seulement |
+
+Le `pyproject.toml` épingle `docling[ocrmac,vlm]>=2.129,<3` : la borne haute
+évite qu'une version majeure change les noms de pipelines ou le calcul des
+notes de confiance sans prévenir.
+
+Aucune de ces briques n'appelle de service distant dans cette configuration —
+c'est vérifiable, voir Confidentialité.
 
 ## Installation
 
@@ -99,6 +125,12 @@ Nanonets au lieu de quatre — soit environ 15 s au lieu de 60 s.
 
 ## Confidentialité
 
+C'est la raison d'être de ce dépôt. Un OCR en ligne suppose de téléverser le
+document : pour une facture, un bilan sanguin ou un contrat, cela signifie
+confier la pièce à un tiers, avec la rétention et la localisation qu'il
+pratique. Ici le document ne quitte pas le disque, et Docling est configuré
+pour que ses propres échappatoires réseau soient fermées.
+
 Cinq verrous, posés dans `lancer.sh` et `app.py` :
 
 | Verrou | Ce qu'il bloque |
@@ -117,8 +149,29 @@ Ces affirmations se vérifient :
 ```
 
 Le script lance une conversion réelle et échantillonne les connexions du
-processus serveur pendant toute sa durée. Il signale toute connexion vers
-autre chose que `127.0.0.1`.
+processus serveur toutes les 0,4 s pendant toute sa durée, via `lsof`. Il
+signale toute connexion vers autre chose que la boucle locale.
+
+### Portée exacte de la garantie
+
+Ce qui est couvert :
+
+- **Aucune sortie réseau pendant la conversion**, mesurée et non supposée.
+- **Aucun service d'inférence distant** : `enable_remote_services=False`
+  côté Docling, et les deux modèles tournent sur le GPU de la machine.
+- **Aucune trace persistante hors du dossier temporaire** : les images
+  normalisées et les Markdown produits vont dans un `mkdtemp`, et le
+  sous-dossier de travail est supprimé en fin de lot.
+
+Ce qui ne l'est pas, et qu'il faut savoir :
+
+- Le **téléchargement initial des modèles** passe par Hugging Face. Il ne
+  transmet aucun document, mais c'est le seul moment où la machine parle au
+  réseau. Faites-le avant, une fois pour toutes.
+- Les **Markdown produits restent dans le dossier temporaire** du système
+  jusqu'au prochain redémarrage. Déplacez-les si le poste est partagé.
+- Le chiffrement du disque et l'accès physique au poste relèvent de macOS,
+  pas de cet outil.
 
 ## Formats acceptés
 
