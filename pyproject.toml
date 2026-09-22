@@ -3,6 +3,8 @@ name = "mac-docling-std-nano"
 version = "0.1.0"
 description = "Conversion locale de PDF et d'images en Markdown : pipeline Docling standard, bascule sur Nanonets-OCR2 page par page quand la confiance est basse."
 requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "docling[ocrmac,vlm]>=2.129,<3",
     "gradio>=6.28,<7",

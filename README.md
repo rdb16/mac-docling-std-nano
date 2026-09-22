@@ -230,3 +230,24 @@ Sur une facture d'une page, rien n'est retiré.
 - À l'arrêt du serveur, Docling peut afficher une `AttributeError` dans
   `VlmConvertModel.__del__` : le module de journalisation est déjà démonté.
   Sans conséquence.
+
+## Licence
+
+Ce dépôt est publié sous licence **MIT** : voir [LICENSE](LICENSE). Vous pouvez
+l'utiliser, le modifier et le redistribuer, y compris commercialement, à
+condition de conserver la notice de copyright.
+
+Les dépendances gardent leur propre licence. Toute la chaîne Docling est sous
+MIT, comme `ocrmac`, `mlx` et `mlx-vlm` ; `gradio` est sous Apache-2.0 :
+
+| Composant | Licence |
+|-----------|---------|
+| `docling`, `docling-core`, `docling-ibm-models`, `docling-parse` | MIT |
+| `ocrmac`, `mlx`, `mlx-vlm` | MIT |
+| `gradio` | Apache-2.0 |
+
+Les **poids des modèles ne sont pas couverts par cette licence** et ne sont
+pas redistribués ici : le dépôt ne fait qu'indiquer comment les télécharger.
+Vérifiez leurs conditions propres avant un usage commercial, en particulier
+celles de [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B),
+dérivé de Qwen2.5-VL-3B-Instruct.
