@@ -37,30 +37,164 @@ MOTEUR = Moteur()
 COLONNES = ["Page", "Moteur", "parse", "layout", "OCR", "tableaux",
             "total", "confiance", "note", "bascule"]
 
+# Les deux gammes sont relevées sur le logo : le turquoise du cerveau-circuit
+# et le graphite du cadre. Les échantillons cités en commentaire sont les
+# pixels d'origine, les autres paliers sont interpolés autour.
+TURQUOISE = gr.themes.Color(
+    c50="#eefbfa", c100="#d2f4f2", c200="#a8e8e7",
+    c300="#74d9d8", c400="#3cbfc1",
+    c500="#1fa2a6",   # cœur du halo, proche de #2b7671 éclairci
+    c600="#158286", c700="#16696d",
+    c800="#175457", c900="#17464a", c950="#082a2d",
+)
+GRAPHITE = gr.themes.Color(
+    c50="#f6f7f7", c100="#ebeded", c200="#d8dadb",
+    c300="#b6bbbb", c400="#8d9293",
+    c500="#6c7172", c600="#555959", c700="#434647",
+    c800="#2c2e2f",
+    c900="#202123",   # teinte exacte du cadre du logo
+    c950="#141517",
+)
+
 # Police système : gr.themes.GoogleFont ferait charger fonts.googleapis.com
 # depuis le navigateur.
 THEME = gr.themes.Soft(
+    primary_hue=TURQUOISE,
+    secondary_hue=TURQUOISE,
+    neutral_hue=GRAPHITE,
+    radius_size=gr.themes.sizes.radius_md,
     font=["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
     font_mono=["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+).set(
+    # Fond très légèrement turquoise en clair, graphite du logo en sombre.
+    body_background_fill="#f4f8f8",
+    body_background_fill_dark=GRAPHITE.c950,
+    background_fill_secondary="#eaf2f2",
+    background_fill_secondary_dark=GRAPHITE.c900,
+    block_background_fill="white",
+    block_background_fill_dark=GRAPHITE.c900,
+    block_border_width="1px",
+    border_color_primary="#d6e4e4",
+    border_color_primary_dark=GRAPHITE.c800,
+    block_label_background_fill=TURQUOISE.c50,
+    block_label_background_fill_dark=TURQUOISE.c800,
+    block_label_text_color=TURQUOISE.c700,
+    block_label_text_color_dark=TURQUOISE.c100,
+    block_title_text_color=TURQUOISE.c700,
+    block_title_text_color_dark=TURQUOISE.c100,
+    block_shadow="0 1px 2px rgba(23, 70, 74, .06)",
+    button_large_radius="10px",
+    button_medium_radius="10px",
+    # Le dégradé n'est pas hérité en sombre : Gradio y retombe sur *primary_600.
+    button_primary_background_fill=f"linear-gradient(135deg, {TURQUOISE.c600}, {TURQUOISE.c400})",
+    button_primary_background_fill_dark=f"linear-gradient(135deg, {TURQUOISE.c700}, {TURQUOISE.c500})",
+    button_primary_background_fill_hover=f"linear-gradient(135deg, {TURQUOISE.c500}, {TURQUOISE.c300})",
+    button_primary_background_fill_hover_dark=f"linear-gradient(135deg, {TURQUOISE.c600}, {TURQUOISE.c400})",
+    button_primary_border_color=TURQUOISE.c600,
+    button_primary_border_color_dark=TURQUOISE.c700,
+    button_primary_shadow="0 2px 8px rgba(21, 130, 134, .28)",
+    button_primary_shadow_dark="0 2px 10px rgba(8, 42, 45, .55)",
+    button_secondary_background_fill="white",
+    button_secondary_background_fill_dark=GRAPHITE.c800,
+    button_secondary_background_fill_hover=TURQUOISE.c50,
+    button_secondary_background_fill_hover_dark=TURQUOISE.c800,
+    button_secondary_border_color="#cadcdc",
+    button_secondary_border_color_dark=GRAPHITE.c700,
+    button_secondary_text_color=GRAPHITE.c700,
+    button_secondary_text_color_dark=GRAPHITE.c100,
+    checkbox_background_color_selected=TURQUOISE.c600,
+    checkbox_border_color_selected=TURQUOISE.c600,
+    checkbox_border_color_focus=TURQUOISE.c400,
+    checkbox_label_background_fill_selected=TURQUOISE.c50,
+    checkbox_label_background_fill_selected_dark=TURQUOISE.c800,
+    input_border_color_focus=TURQUOISE.c400,
+    slider_color=TURQUOISE.c500,
+    table_border_color=TURQUOISE.c100,
+    table_border_color_dark=GRAPHITE.c800,
+    table_even_background_fill="#f3f9f9",
+    table_even_background_fill_dark=GRAPHITE.c800,
+    table_odd_background_fill="white",
+    table_odd_background_fill_dark=GRAPHITE.c900,
+    link_text_color=TURQUOISE.c700,
+    link_text_color_dark=TURQUOISE.c300,
+    link_text_color_hover=TURQUOISE.c500,
+    link_text_color_hover_dark=TURQUOISE.c200,
 )
 
 CSS = """
 footer { display: none !important; }
-#bandeau { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
-#bandeau img { width: 44px; height: 44px; border-radius: 9px; }
-#bandeau h1 { margin: 0; font-size: 20px; line-height: 1.2; }
-#bandeau p { margin: 2px 0 0; font-size: 13px; opacity: .72; }
-.piste {
-  height: 8px; border-radius: 99px; overflow: hidden;
-  background: var(--neutral-200); margin: 10px 0 4px;
+
+/* Bandeau : le logo est posé sur un panneau graphite, comme son propre
+   cadre, avec le halo turquoise du cerveau-circuit prolongé derrière. */
+#bandeau {
+  display: flex; align-items: center; gap: 18px;
+  padding: 16px 20px; margin-bottom: 10px; border-radius: 14px;
+  background:
+    radial-gradient(120% 180% at 12% 50%, rgba(31, 162, 166, .30), transparent 60%),
+    linear-gradient(135deg, #202123 0%, #171a1b 55%, #11272a 100%);
+  border: 1px solid #2f3a3b;
+  box-shadow: 0 6px 22px rgba(8, 42, 45, .28);
 }
-.jauge { height: 100%; border-radius: 99px; background: var(--primary-500);
-         transition: width .25s ease; }
-.jauge.finie { background: #15803d; }
-.legende { font-size: 12px; opacity: .75; display: flex;
-           justify-content: space-between; }
-.arret { padding: 14px; border-radius: 10px; text-align: center;
-         background: #fef2f2; color: #991b1b; font-weight: 600; }
+#bandeau img {
+  width: 54px; height: 54px; border-radius: 12px; flex: none;
+  box-shadow: 0 0 0 1px rgba(116, 217, 216, .45),
+              0 0 18px rgba(31, 162, 166, .40);
+}
+#bandeau h1 {
+  margin: 0; font-size: 21px; line-height: 1.2; font-weight: 600;
+  color: #eaf5f4; letter-spacing: .02em;
+}
+#bandeau p {
+  margin: 4px 0 0; font-size: 13px; line-height: 1.45;
+  color: #9fc4c4; opacity: 1;
+}
+#bandeau p b { color: #74d9d8; font-weight: 600; }
+
+/* Barre d'avancement : même dégradé que le bouton primaire. */
+.piste {
+  height: 9px; border-radius: 99px; overflow: hidden;
+  background: var(--neutral-200); margin: 10px 0 5px;
+  box-shadow: inset 0 1px 2px rgba(8, 42, 45, .10);
+}
+.jauge {
+  height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, var(--primary-600), var(--primary-400));
+  transition: width .25s ease;
+}
+.jauge.finie {
+  background: linear-gradient(90deg, var(--primary-500), var(--primary-300));
+  box-shadow: 0 0 12px rgba(60, 191, 193, .55);
+}
+.legende {
+  font-size: 12px; display: flex; justify-content: space-between;
+  color: var(--primary-700); letter-spacing: .01em;
+}
+.dark .legende { color: var(--primary-300); }
+
+/* Onglets et étiquettes reprennent le turquoise plutôt que le bleu Gradio. */
+.tab-nav button.selected {
+  color: var(--primary-600) !important;
+  border-bottom-color: var(--primary-500) !important;
+}
+.dark .tab-nav button.selected { color: var(--primary-300) !important; }
+table thead th {
+  background: var(--primary-50) !important;
+  color: var(--primary-800) !important;
+  font-weight: 600;
+}
+.dark table thead th {
+  background: var(--primary-900) !important;
+  color: var(--primary-100) !important;
+}
+
+/* Le panneau d'arrêt garde le rouge d'alerte, adouci au graphite ambiant. */
+.arret {
+  padding: 15px; border-radius: 12px; text-align: center; font-weight: 600;
+  background: #fdf3f3; color: #9a2b2b; border: 1px solid #f0d6d6;
+}
+.dark .arret {
+  background: #2a1d1e; color: #f0b4b4; border-color: #4a2c2e;
+}
 """
 
 
@@ -76,7 +210,7 @@ def _bandeau() -> str:
         f'<div id="bandeau">{image}<div>'
         "<h1>Conversion locale en Markdown</h1>"
         "<p>Docling standard avec OCR Apple Vision en français · bascule sur "
-        "Nanonets-OCR2 page par page · rien ne quitte cette machine</p>"
+        "Nanonets-OCR2 page par page · <b>rien ne quitte cette machine</b></p>"
         "</div></div>"
     )
 
