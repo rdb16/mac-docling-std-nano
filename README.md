@@ -104,29 +104,6 @@ Mesuré sur un compte rendu de laboratoire de treize pages : 276 lignes
 retirées sur 691, soit 18 % de caractères en moins, sans perte de contenu.
 Sur une facture d'une page, rien n'est retiré.
 
-## Logo et icône d'onglet
-
-Le logo est dans `src/mac_docling/assets/` : `logo.png` pour le bandeau,
-`favicon.png` pour l'onglet. Gradio sert ce dernier sur `/favicon.ico` et en
-dérive les icônes PWA de 192 et 512 px, d'où un favicon stocké en 256 px : lui
-en fournir 64 donnait des icônes floues après agrandissement.
-
-Gradio n'ajoutant aucune balise `<link rel="icon">` dans le HTML, l'app en
-injecte deux, pointant sur `/favicon.ico` et `/pwa_icon/192`. Elles visent les
-fichiers servis localement et non des data URI, qui ajoutaient trois copies du
-logo à la page — 405 Ko contre 102 Ko.
-
-Pour changer de logo, remplacez le fichier source et régénérez :
-
-```bash
-.venv/bin/python - <<'EOF'
-from PIL import Image, ImageOps
-src = ImageOps.exif_transpose(Image.open("chemin/vers/logo.jpeg")).convert("RGB")
-src.resize((256, 256), Image.LANCZOS).save("src/mac_docling/assets/favicon.png")
-src.resize((160, 160), Image.LANCZOS).save("src/mac_docling/assets/logo.png")
-EOF
-```
-
 ## Limites connues
 
 - **Un tableau à cheval sur deux pages est coupé en deux**, puisque les pages
@@ -143,8 +120,6 @@ EOF
   texte pauvre.
 - **Nanonets occupe environ 6 Go de mémoire unifiée** une fois chargé. Il ne
   l'est qu'au premier basculement.
-- **Le logo fourni fait 80 × 80 px.** Agrandi en 256 px pour le favicon, il
-  reste un peu doux. Une source plus grande donnerait une icône plus nette.
 - À l'arrêt du serveur, Docling peut afficher une `AttributeError` dans
   `VlmConvertModel.__del__` : le module de journalisation est déjà démonté.
   Sans conséquence.

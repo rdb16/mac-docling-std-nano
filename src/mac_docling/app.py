@@ -69,23 +69,6 @@ def _donnee_uri(chemin: Path, type_mime: str = "image/png") -> str:
             f"{base64.b64encode(chemin.read_bytes()).decode('ascii')}")
 
 
-def _entete_html() -> str:
-    """Déclare explicitement l'icône d'onglet.
-
-    Gradio sert le favicon sur /favicon.ico et en dérive les icônes PWA, mais
-    n'ajoute aucune balise <link rel="icon"> dans le HTML : l'icône ne tient
-    alors qu'à la convention du navigateur. On pointe sur les chemins locaux
-    déjà servis plutôt que sur des data URI, qui alourdiraient la page de
-    trois copies du logo.
-    """
-    if not (ASSETS / "favicon.png").exists():
-        return ""
-    return (
-        '<link rel="icon" type="image/png" href="/favicon.ico">'
-        '<link rel="apple-touch-icon" href="/pwa_icon/192">'
-    )
-
-
 def _bandeau() -> str:
     logo = ASSETS / "logo.png"
     image = (f'<img src="{_donnee_uri(logo)}" alt="SNTPK">' if logo.exists() else "")
@@ -332,7 +315,6 @@ def main() -> None:
     construire().launch(
         theme=THEME,               # police système, jamais gr.themes.GoogleFont
         css=CSS,
-        head=_entete_html(),       # <link rel="icon"> explicite, en data URI
         favicon_path=str(favicon) if favicon.exists() else None,
         server_name="127.0.0.1",   # jamais 0.0.0.0 : pas d'écoute sur le réseau
         share=False,               # aucun tunnel public
