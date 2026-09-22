@@ -19,9 +19,63 @@ uv venv --python 3.12 .venv
 VIRTUAL_ENV=.venv uv pip install -e .
 ```
 
-Les poids des modèles se téléchargent depuis Hugging Face au premier usage :
-environ 0,5 Go pour le pipeline standard et 7,5 Go pour Nanonets-OCR2. Faites
-ce premier lancement **sans** `HF_HUB_OFFLINE`, puis réactivez-le.
+## Préchargement des modèles
+
+`lancer.sh` exporte `HF_HUB_OFFLINE=1`. Au lancement, plus rien n'est donc
+téléchargé : les poids doivent être présents **avant**, sinon la première
+conversion s'arrête sur une erreur au lieu d'attendre. Comptez environ 8 Go.
+
+Les trois dépôts sont publics, aucune authentification Hugging Face n'est
+nécessaire :
+
+```bash
+# Pipeline standard — analyse de mise en page
+.venv/bin/hf download docling-project/docling-layout-heron --revision main
+
+# Pipeline standard — structure des tableaux.
+# La révision est figée : Docling demande v2.3.0, pas main.
+.venv/bin/hf download docling-project/docling-models --revision v2.3.0
+
+# Bascule VLM — Nanonets-OCR2 quantifié pour MLX
+.venv/bin/hf download mlx-community/Nanonets-OCR2-3B-bf16 --revision main
+```
+
+| Dépôt | Rôle | Sur disque |
+|-------|------|------------|
+| `docling-project/docling-layout-heron` | découpage de la page en régions | 172 Mo |
+| `docling-project/docling-models` (`v2.3.0`) | structure des tableaux (TableFormer) | 358 Mo |
+| `mlx-community/Nanonets-OCR2-3B-bf16` | bascule des pages faibles | 7,5 Go |
+
+L'OCR n'apparaît pas dans cette liste : Apple Vision est fourni avec macOS.
+
+Si vous ne comptez pas activer la bascule, les deux premiers dépôts suffisent
+— décochez alors **Bascule sur Nanonets-OCR2** dans l'interface. Les 7,5 Go de
+Nanonets ne se justifient que pour les scans et les tickets de caisse, où le
+pipeline standard perd le texte classé en image.
+
+### Vérifier que le cache suffit
+
+Tout arrive dans `~/.cache/huggingface/hub`, que Docling relit ensuite hors
+ligne. Cette commande construit le pipeline standard sans réseau :
+
+```bash
+HF_HUB_OFFLINE=1 .venv/bin/python -c \
+  "from mac_docling.moteur import Moteur; Moteur().standard()"
+```
+
+Quelques secondes puis aucune erreur : le cache est complet.
+
+N'utilisez pas `docling-tools models download` pour ce préchargement : cette
+commande écrit dans `~/.cache/docling/models`, que l'application ne lit pas.
+`moteur.py` ne renseigne pas `artifacts_path`, Docling résout donc par le
+cache Hugging Face.
+
+À défaut de préchargement, un premier lancement en ligne fait le travail, au
+prix de l'attente et sans barre de progression :
+
+```bash
+HF_HUB_OFFLINE=0 ./lancer.sh
+```
 
 ## Lancer
 
