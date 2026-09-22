@@ -1,6 +1,52 @@
+# Environnement virtuel et dépendances
 .venv/
+venv/
+.python-version
+
+# Cache et bytecode Python
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*.so
+.Python
+
+# Artéfacts de construction hatchling
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Caches d'outillage
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets et configuration locale : rien de tout cela ne doit partir
+# sur une remote, même dans un dépôt privé.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Données de travail de l'application : PDF déposés, images normalisées
+# et Markdown produit. Volumineux et propres à chaque poste.
 travail/
 sorties/
+
+# Poids de modèles et caches Hugging Face, si jamais ils atterrissent ici
+*.safetensors
+*.gguf
+.cache/
+models/
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
