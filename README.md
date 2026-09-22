@@ -33,12 +33,26 @@ de chaque page et les bascules, au fil de l'eau.
 
 Le `pyproject.toml` épingle `docling[ocrmac,vlm]>=2.129,<3` : la borne haute
 évite qu'une version majeure change les noms de pipelines ou le calcul des
-notes de confiance sans prévenir.
+notes de confiance sans prévenir. Le `uv.lock` versionné va plus loin et fige
+les 165 paquets de la résolution, aux versions exactes de ce tableau — celles
+sur lesquelles les mesures de ce README ont été faites.
 
 Aucune de ces briques n'appelle de service distant dans cette configuration —
 c'est vérifiable, voir Confidentialité.
 
 ## Installation
+
+```bash
+uv sync --frozen
+```
+
+`--frozen` interdit à uv de recalculer la résolution : vous obtenez le contenu
+exact de `uv.lock`, et non la dernière version compatible du moment. Sans ce
+drapeau, uv réécrirait le verrou et pourrait installer un Docling plus récent
+que celui sur lequel l'outil a été mesuré.
+
+Pour modifier le code plutôt que seulement l'utiliser, l'installation éditable
+reste possible — mais elle ignore le verrou :
 
 ```bash
 uv venv --python 3.12 .venv
