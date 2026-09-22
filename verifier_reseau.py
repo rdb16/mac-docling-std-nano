@@ -76,9 +76,11 @@ def main(argv: list[str]) -> int:
     client = Client(URL, verbose=False)
     depart = time.perf_counter()
     try:
-        etat, *_ = client.predict(
+        # L'interface renvoie d'abord la barre d'avancement, puis le journal.
+        _, etat, *_ = client.predict(
             fichiers=[handle_file(str(Path(c).resolve())) for c in argv],
-            seuil="fair", routage_actif=True, api_name="/traiter",
+            seuil="fair", routage_actif=True, dedupliquer=True,
+            api_name="/traiter",
         )
     finally:
         fini.set()

@@ -2,10 +2,13 @@
 
 Conversion locale de PDF et d'images en Markdown, sur Mac Apple Silicon.
 
-Le pipeline Docling standard traite chaque page avec l'OCR Apple Vision en
-français. Chaque page reçoit une note de confiance ; celles qui passent sous
-le seuil sont repassées à Nanonets-OCR2 via MLX. L'interface affiche en direct
-le temps de chaque étape, la note de chaque page et les bascules.
+Le document est découpé page par page. Chaque page passe au pipeline Docling
+standard avec l'OCR Apple Vision en français et reçoit une note de confiance ;
+celles qui passent sous le seuil sont repassées à Nanonets-OCR2 via MLX. Les
+en-têtes et pieds de page répétés sont retirés avant l'assemblage final.
+
+L'interface affiche une barre d'avancement, le temps de chaque étape, la note
+de chaque page et les bascules, au fil de l'eau.
 
 **Rien ne quitte la machine.** Voir la section Confidentialité.
 
@@ -79,6 +82,27 @@ d'origine n'est jamais modifié.
   Docling classe ainsi : `poor` sous 0,5, `fair` sous 0,8, `good` sous 0,9,
   `excellent` au-delà. Défaut : `fair`.
 - **Bascule sur Nanonets-OCR2** — décochez pour rester en pipeline standard.
+- **Retirer en-têtes et pieds répétés** — voir ci-dessous. Défaut : activé.
+
+Trois boutons : **Convertir**, **Nouvel OCR** qui vide l'écran, et **Fermer le
+serveur** qui arrête le processus.
+
+## Déduplication des en-têtes et pieds de page
+
+Les pages étant converties séparément, chacune rapporte l'en-tête et le pied
+du document. Concaténées telles quelles, ces lignes reviennent autant de fois
+qu'il y a de pages.
+
+Le critère retenu est la fréquence **entre les pages**, pas la position dans
+la page : après remise en ordre de lecture, Docling place souvent l'en-tête au
+milieu du Markdown. Une ligne vue sur au moins 60 % des pages d'un document
+d'au moins trois pages est tenue pour un en-tête ou un pied ; sa première
+occurrence est conservée, les suivantes sont retirées. Les lignes de tableau
+sont épargnées : deux pages peuvent légitimement porter la même donnée.
+
+Mesuré sur un compte rendu de laboratoire de treize pages : 276 lignes
+retirées sur 691, soit 18 % de caractères en moins, sans perte de contenu.
+Sur une facture d'une page, rien n'est retiré.
 
 ## Limites connues
 
@@ -88,6 +112,9 @@ d'origine n'est jamais modifié.
   pipeline standard. C'est ce qui rend la bascule indispensable sur les
   tickets de caisse scannés : l'OCR lit le texte, mais la mise en page le
   classe en image et l'export n'en garde rien.
+- **La déduplication est irréversible dans le fichier produit.** Décochez-la
+  si vos documents répètent légitimement les mêmes phrases d'une page à
+  l'autre. Le nombre de lignes retirées est toujours affiché.
 - **La note de confiance n'est pas une mesure de fidélité.** Elle juge la
   cohérence interne de l'analyse. Une page peut être notée *good* et rendre un
   texte pauvre.

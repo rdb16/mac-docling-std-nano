@@ -26,7 +26,7 @@ from docling.datamodel.settings import settings
 # reste vide et l'on perd le détail par étape.
 settings.debug.profile_pipeline_timings = True
 
-from mac_docling import surveillance
+from mac_docling import deduplication, surveillance
 from mac_docling.documents import Document
 
 _log = logging.getLogger(__name__)
@@ -200,11 +200,12 @@ def _confiance(resultat) -> dict:
 
 
 def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
-              routage_actif: bool = True) -> Iterator[Evenement]:
+              routage_actif: bool = True,
+              dedupliquer: bool = True) -> Iterator[Evenement]:
     """Convertit un document page par page en émettant un événement par étape.
 
-    Le Markdown final est la concaténation des pages, chaque page routée étant
-    remplacée par la sortie du VLM.
+    Le Markdown final assemble les pages, chaque page routée étant remplacée
+    par la sortie du VLM, puis retire les en-têtes et pieds de page répétés.
     """
     yield Evenement(
         "document.debut", document.nom,
@@ -316,13 +317,12 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                  "statut": "ecartee" if not adoptee else "success"},
             )
 
-        if markdown.strip():
-            morceaux.append(markdown.strip())
+        morceaux.append(markdown)
 
-    complet = "\n\n".join(morceaux) + "\n" if morceaux else ""
+    complet, rapport = deduplication.assembler(morceaux, actif=dedupliquer)
     yield Evenement(
-        "document.fin", document.nom, "",
+        "document.fin", document.nom, rapport.resume(),
         {"ms": round((time.perf_counter() - debut_document) * 1000),
          "pages_routees": pages_routees, "caracteres": len(complet),
-         "markdown": complet},
+         "markdown": complet, "lignes_retirees": rapport.lignes_retirees},
     )
