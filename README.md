@@ -67,65 +67,57 @@ uv run pytest
 uv run ruff check .
 ```
 
-## Préchargement des modèles
+## Modèles
 
-L'application positionne `HF_HUB_OFFLINE=1` par défaut, qu'on la lance par
-`lancer.sh` ou directement. Au lancement, plus rien n'est donc téléchargé :
-les poids doivent être présents **avant**. Sans le pipeline standard, les
-documents échouent un à un ; sans Nanonets-OCR2, les pages faibles restent
-en pipeline standard et le journal le signale. Comptez environ 8 Go.
+L'application a besoin de trois modèles publics Hugging Face, environ 8 Go en
+tout. Aucun compte Hugging Face n'est nécessaire.
 
-Les trois dépôts sont publics, aucune authentification Hugging Face n'est
-nécessaire :
-
-```bash
-# Pipeline standard — analyse de mise en page
-.venv/bin/hf download docling-project/docling-layout-heron --revision main
-
-# Pipeline standard — structure des tableaux.
-# La révision est figée : Docling demande v2.3.0, pas main.
-.venv/bin/hf download docling-project/docling-models --revision v2.3.0
-
-# Bascule VLM — Nanonets-OCR2 quantifié pour MLX
-.venv/bin/hf download mlx-community/Nanonets-OCR2-3B-bf16 --revision main
-```
-
-| Dépôt | Rôle | Sur disque |
-|-------|------|------------|
-| `docling-project/docling-layout-heron` | découpage de la page en régions | 172 Mo |
-| `docling-project/docling-models` (`v2.3.0`) | structure des tableaux (TableFormer) | 358 Mo |
-| `mlx-community/Nanonets-OCR2-3B-bf16` | bascule des pages faibles | 7,5 Go |
+| Dépôt | Rôle | Sur disque | Sans lui |
+|-------|------|------------|----------|
+| `docling-project/docling-layout-heron` | découpage de la page en régions | 172 Mo | aucune conversion |
+| `docling-project/docling-models` (`v2.3.0`) | structure des tableaux (TableFormer) | 358 Mo | aucune conversion |
+| `mlx-community/Nanonets-OCR2-3B-bf16` | bascule des pages faibles | 7,5 Go | conversion sans bascule |
 
 L'OCR n'apparaît pas dans cette liste : Apple Vision est fourni avec macOS.
 
-Si vous ne comptez pas activer la bascule, les deux premiers dépôts suffisent
-— décochez alors **Bascule sur Nanonets-OCR2** dans l'interface. Les 7,5 Go de
-Nanonets ne se justifient que pour les scans et les tickets de caisse, où le
-pipeline standard perd le texte classé en image.
+### Au premier lancement
 
-### Vérifier que le cache suffit
+À l'ouverture de la page, l'application vérifie sans réseau que chaque modèle
+est complet dans le cache Hugging Face (`~/.cache/huggingface/hub`) : chaque
+fichier de la révision attendue doit y être, à la bonne taille. Un
+téléchargement interrompu est donc repéré.
 
-Tout arrive dans `~/.cache/huggingface/hub`, que Docling relit ensuite hors
-ligne. Cette commande construit le pipeline standard sans réseau :
+- **Tout est là** : rien ne s'affiche, l'application est prête.
+- **Il manque un modèle** : un panneau **Modèles** apparaît en haut de page,
+  avec la liste de ce qui manque et un bouton **Télécharger les modèles
+  manquants**. Une barre suit les octets reçus ; **Annuler** interrompt le
+  téléchargement.
+
+Nanonets est facultatif. Ses 7,5 Go ne se justifient que pour les scans et les
+tickets de caisse, où le pipeline standard perd le texte classé en image.
+Sans lui, la conversion fonctionne et le journal indique que la bascule est
+désactivée.
+
+### Téléchargement et réseau
+
+Le serveur reste hors ligne en permanence (`HF_HUB_OFFLINE=1`), y compris
+pendant un téléchargement. Celui-ci tourne dans un processus à part, le seul
+autorisé à joindre le Hub. Ses connexions disparaissent avec lui, et il ne
+transmet aucun document. Une conversion lancée pendant le téléchargement
+attend qu'il se termine.
+
+### Préchargement en ligne de commande
+
+Pour préparer un poste sans ouvrir l'interface :
 
 ```bash
-HF_HUB_OFFLINE=1 .venv/bin/python -c \
-  "from mac_docling.moteur import Moteur; Moteur().standard()"
+.venv/bin/hf download docling-project/docling-layout-heron --revision main
+.venv/bin/hf download docling-project/docling-models --revision v2.3.0
+.venv/bin/hf download mlx-community/Nanonets-OCR2-3B-bf16 --revision main
 ```
 
-Quelques secondes puis aucune erreur : le cache est complet.
-
-N'utilisez pas `docling-tools models download` pour ce préchargement : cette
-commande écrit dans `~/.cache/docling/models`, que l'application ne lit pas.
-`moteur.py` ne renseigne pas `artifacts_path`, Docling résout donc par le
-cache Hugging Face.
-
-À défaut de préchargement, un premier lancement en ligne fait le travail, au
-prix de l'attente et sans barre de progression :
-
-```bash
-HF_HUB_OFFLINE=0 ./lancer.sh
-```
+N'utilisez pas `docling-tools models download` : cette commande écrit dans
+`~/.cache/docling/models`, que l'application ne lit pas.
 
 ## Lancer
 
@@ -162,7 +154,7 @@ Cinq verrous, posés dans `lancer.sh` et `app.py` :
 | `GRADIO_ANALYTICS_ENABLED=False` et `analytics_enabled=False` | Gradio poste sinon vers `api.gradio.app`, contrôle de version compris |
 | Police système, jamais `gr.themes.GoogleFont` | le chargement de `fonts.googleapis.com` par le navigateur |
 | `server_name="127.0.0.1"`, `share=False` | toute écoute hors boucle locale, tout tunnel public |
-| `HF_HUB_OFFLINE=1` | les appels à `huggingface.co/api/models` pour vérifier les révisions |
+| `HF_HUB_OFFLINE=1`, imposé par `app.py` | tout appel au Hub depuis le serveur ; seul le processus de téléchargement des modèles, lancé à la main, y accède |
 | `enable_remote_services=False` | tout service d'inférence distant côté Docling |
 
 Ces affirmations se vérifient :
@@ -191,9 +183,9 @@ Ce qui est couvert :
 
 Ce qui ne l'est pas, et qu'il faut savoir :
 
-- Le **téléchargement initial des modèles** passe par Hugging Face. Il ne
-  transmet aucun document, mais c'est le seul moment où la machine parle au
-  réseau. Faites-le avant, une fois pour toutes.
+- Le **téléchargement des modèles** passe par Hugging Face. Il ne transmet
+  aucun document, mais c'est le seul moment où la machine parle au réseau :
+  il n'a lieu que sur demande, depuis le panneau **Modèles**.
 - Les **Markdown produits disparaissent avec le serveur** : téléchargez-les
   avant de le fermer. Un arrêt brutal (`kill -9`, coupure de courant) ne
   laisse pas le temps de nettoyer ; le dossier `mac-docling-*` reste alors
