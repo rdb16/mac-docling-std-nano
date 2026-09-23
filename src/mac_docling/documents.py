@@ -16,7 +16,14 @@ _log = logging.getLogger(__name__)
 
 EXTENSIONS_PDF = {".pdf"}
 EXTENSIONS_IMAGE = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
-EXTENSIONS_A_TRANSCODER = {".jp2", ".j2k", ".jpf", ".jpx", ".heic", ".heif", ".gif"}
+EXTENSIONS_A_TRANSCODER = {".jp2", ".j2k", ".jpf", ".jpx", ".gif"}
+# Les photos HEIC d'iPhone sont trop lourdes pour l'OCR et Pillow ne les lit
+# pas sans greffon : on les refuse avec une consigne plutôt que de les
+# confondre avec un fichier illisible.
+EXTENSIONS_REFUSEES = {
+    ".heic": "HEIC refusé, trop volumineux : exportez la photo en JPEG",
+    ".heif": "HEIF refusé, trop volumineux : exportez la photo en JPEG",
+}
 EXTENSIONS_ACCEPTEES = EXTENSIONS_PDF | EXTENSIONS_IMAGE | EXTENSIONS_A_TRANSCODER
 
 # Un scan dépasse souvent 20 Mpx ; l'OCR le rééchantillonne ensuite d'un facteur

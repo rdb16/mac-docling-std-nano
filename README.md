@@ -191,11 +191,14 @@ Ce qui ne l'est pas, et qu'il faut savoir :
 
 PDF, et les images `jpg`, `jpeg`, `png`, `tif`, `tiff`, `bmp`, `webp`.
 
-Les formats que Docling ne lit pas (`jp2`, `heic`, `gif`) sont transcodés en
+Les formats que Docling ne lit pas (`jp2`, `gif`) sont transcodés en
 PNG dans un dossier temporaire, et les images dont le plus grand côté dépasse
 3000 px sont rééchantillonnées — l'OCR les agrandit ensuite d'un facteur 3, ce
 qui dépasserait la protection de Pillow contre les images pièges. Le fichier
 d'origine n'est jamais modifié.
+
+Les photos `heic` et `heif` sont refusées : trop volumineuses pour l'OCR.
+Exportez-les d'abord en JPEG.
 
 ## Réglages de l'interface
 

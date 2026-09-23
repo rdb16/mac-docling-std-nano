@@ -26,7 +26,11 @@ from pathlib import Path  # noqa: E402
 
 import gradio as gr  # noqa: E402
 
-from mac_docling.documents import EXTENSIONS_ACCEPTEES, preparer  # noqa: E402
+from mac_docling.documents import (  # noqa: E402
+    EXTENSIONS_ACCEPTEES,
+    EXTENSIONS_REFUSEES,
+    preparer,
+)
 from mac_docling.moteur import ORDRE_NOTES, Config, Genre, Moteur, convertir  # noqa: E402
 
 _log = logging.getLogger(__name__)
@@ -267,6 +271,10 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
     refus = []
     for fichier in fichiers:
         chemin = Path(fichier)
+        if chemin.suffix.lower() in EXTENSIONS_REFUSEES:
+            refus.append(f"✗ **{chemin.name}** — "
+                         f"{EXTENSIONS_REFUSEES[chemin.suffix.lower()]}")
+            continue
         if chemin.suffix.lower() not in EXTENSIONS_ACCEPTEES:
             refus.append(f"✗ **{chemin.name}** — extension non gérée")
             continue
