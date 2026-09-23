@@ -18,7 +18,6 @@ import math
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from docling.datamodel.settings import settings
 
@@ -26,8 +25,8 @@ from docling.datamodel.settings import settings
 # reste vide et l'on perd le détail par étape.
 settings.debug.profile_pipeline_timings = True
 
-from mac_docling import deduplication, surveillance
-from mac_docling.documents import Document
+from mac_docling import deduplication, surveillance  # noqa: E402
+from mac_docling.documents import Document  # noqa: E402
 
 _log = logging.getLogger(__name__)
 

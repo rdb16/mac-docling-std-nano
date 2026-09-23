@@ -43,11 +43,10 @@ def detecter_type_pdf(chemin: Path) -> tuple[str, int]:
     Utilise pypdfium2 : c'est le seul backend qui expose un accès page par page,
     celui par défaut travaillant en flux.
     """
-    from docling_core.types.doc import BoundingBox, CoordOrigin
-
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.document import InputDocument
+    from docling_core.types.doc import BoundingBox, CoordOrigin
 
     entree = InputDocument(
         path_or_stream=chemin,

@@ -44,7 +44,7 @@ def connexions(pid: int) -> set[str]:
         if not adresse:
             continue
         cible = adresse.group(2)
-        if not any(cible.startswith(l) or f"->{l}" in cible for l in LOCALES):
+        if not any(cible.startswith(loc) or f"->{loc}" in cible for loc in LOCALES):
             suspectes.add(f"{adresse.group(1)} {cible}")
     return suspectes
 
