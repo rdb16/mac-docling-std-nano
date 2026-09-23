@@ -59,6 +59,14 @@ uv venv --python 3.12 .venv
 VIRTUAL_ENV=.venv uv pip install -e .
 ```
 
+Les tests et le linter sont dans le groupe `dev`, installé par défaut par
+`uv sync` :
+
+```bash
+uv run pytest
+uv run ruff check .
+```
+
 ## Préchargement des modèles
 
 L'application positionne `HF_HUB_OFFLINE=1` par défaut, qu'on la lance par
