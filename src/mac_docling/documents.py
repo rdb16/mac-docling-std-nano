@@ -88,7 +88,7 @@ def detecter_type_pdf(chemin: Path) -> tuple[str, int]:
 
 def normaliser_image(source: Path, dossier_travail: Path) -> Path | None:
     """Rend une image lisible par Docling sans toucher à la source."""
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         with Image.open(source) as image:
@@ -106,11 +106,15 @@ def normaliser_image(source: Path, dossier_travail: Path) -> Path | None:
     cible = dossier_travail / f"{source.stem}.png"
     try:
         with Image.open(source) as image:
+            # Docling applique l'orientation EXIF aux images qu'il lit, mais le
+            # PNG réécrit ici perd l'EXIF : on tourne donc les pixels avant.
+            image = ImageOps.exif_transpose(image)
             if image.mode not in ("RGB", "L"):
                 image = image.convert("RGB")
             if trop_grande:
-                facteur = COTE_MAX_IMAGE / max(largeur, hauteur)
-                taille = (round(largeur * facteur), round(hauteur * facteur))
+                # Dimensions relues : la rotation a pu échanger les côtés.
+                facteur = COTE_MAX_IMAGE / max(image.size)
+                taille = (round(image.width * facteur), round(image.height * facteur))
                 image = image.resize(taille, Image.LANCZOS)
                 _log.info("%s rééchantillonné en %dx%d", source.name, *taille)
             image.save(cible, format="PNG")
