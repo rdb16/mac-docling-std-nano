@@ -54,3 +54,27 @@ def test_tiff_multipage_trop_grand_garde_toutes_ses_pages(tmp_path):
     with Image.open(document.chemin) as sortie:
         assert sortie.n_frames == 3
         assert max(sortie.size) == COTE_MAX_IMAGE
+
+
+def test_chemin_libre(tmp_path):
+    from mac_docling.documents import chemin_libre
+
+    assert chemin_libre(tmp_path, "rapport", ".md").name == "rapport.md"
+    (tmp_path / "rapport.md").touch()
+    (tmp_path / "rapport (2).md").touch()
+    assert chemin_libre(tmp_path, "rapport", ".md").name == "rapport (3).md"
+
+
+def test_deux_images_homonymes_ne_s_ecrasent_pas(tmp_path):
+    from PIL import Image
+
+    from mac_docling.documents import preparer
+
+    travail = tmp_path / "travail"
+    cibles = []
+    for dossier in ("a", "b"):
+        (tmp_path / dossier).mkdir()
+        source = tmp_path / dossier / "scan.gif"
+        Image.new("RGB", (100, 100)).save(source)
+        cibles.append(preparer(source, travail).chemin)
+    assert cibles[0] != cibles[1]

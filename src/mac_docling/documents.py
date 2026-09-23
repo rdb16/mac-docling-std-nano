@@ -89,6 +89,20 @@ def detecter_type_pdf(chemin: Path) -> tuple[str, int]:
         backend.unload()
 
 
+def chemin_libre(dossier: Path, nom: str, suffixe: str) -> Path:
+    """Un chemin inutilisé dans `dossier` : « nom (2).md » si « nom.md » existe.
+
+    Deux fichiers déposés peuvent partager un nom — « rapport.pdf » et
+    « rapport.png », ou deux « scan.pdf » venus de dossiers différents.
+    """
+    cible = dossier / f"{nom}{suffixe}"
+    rang = 2
+    while cible.exists():
+        cible = dossier / f"{nom} ({rang}){suffixe}"
+        rang += 1
+    return cible
+
+
 def _redresser(image, nom: str):
     """Une page prête pour l'OCR : orientée, en RGB, au plus COTE_MAX_IMAGE."""
     from PIL import Image, ImageOps
@@ -140,11 +154,11 @@ def normaliser_image(source: Path, dossier_travail: Path) -> tuple[Path, int] | 
                 cadres.append(_redresser(image, source.name))
         # Le PNG ne porte qu'une image : plusieurs pages restent en TIFF.
         if pages > 1:
-            cible = dossier_travail / f"{source.stem}.tif"
+            cible = chemin_libre(dossier_travail, source.stem, ".tif")
             cadres[0].save(cible, format="TIFF", save_all=True,
                            append_images=cadres[1:], compression="tiff_lzw")
         else:
-            cible = dossier_travail / f"{source.stem}.png"
+            cible = chemin_libre(dossier_travail, source.stem, ".png")
             cadres[0].save(cible, format="PNG")
     except Exception as err:
         _log.error("Normalisation impossible pour %s : %s", source.name, err)

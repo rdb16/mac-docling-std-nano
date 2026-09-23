@@ -29,6 +29,7 @@ import gradio as gr  # noqa: E402
 from mac_docling.documents import (  # noqa: E402
     EXTENSIONS_ACCEPTEES,
     EXTENSIONS_REFUSEES,
+    chemin_libre,
     preparer,
 )
 from mac_docling.moteur import ORDRE_NOTES, Config, Genre, Moteur, convertir  # noqa: E402
@@ -349,7 +350,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
                 elif evenement.genre == Genre.DOCUMENT_FIN:
                     termine = True
                     markdown_final = donnees["markdown"]
-                    cible = dossier / f"{document.nom}.md"
+                    cible = chemin_libre(dossier, document.nom, ".md")
                     cible.write_text(markdown_final, encoding="utf-8")
                     produits.append(cible)
                     routees = donnees["pages_routees"]
