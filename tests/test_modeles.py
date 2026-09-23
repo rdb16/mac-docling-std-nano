@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 
 import pytest
 from huggingface_hub import constants
@@ -49,10 +51,16 @@ def test_fichier_manquant_ou_tronque(cache):
     assert not en_cache(MODELE)
 
 
-def test_telechargement_interrompu(cache):
-    _remplir(cache, {"config.json": 10})
+def test_telechargement_interrompu_sans_liste(cache):
+    _remplir(cache, {"config.json": 10}, arbre=False)
     (cache / "blobs" / "123.incomplete").touch()
     assert not en_cache(MODELE)
+
+
+def test_restes_d_un_telechargement_annule_ignores_si_complet(cache):
+    _remplir(cache, {"config.json": 10})
+    (cache / "blobs" / "123.incomplete").touch()
+    assert en_cache(MODELE)
 
 
 def test_sans_liste_de_fichiers(cache):
@@ -60,36 +68,36 @@ def test_sans_liste_de_fichiers(cache):
     assert en_cache(MODELE)
 
 
-def _faux_telechargement(repo_id, revision, tqdm_class):
-    barre = tqdm_class(total=1000, unit="B")
-    for _ in range(4):
-        barre.update(250)
-    barre.close()
-    return "/nulle/part"
+def _commande(script: str):
+    return lambda modele: [sys.executable, "-c", script]
 
 
-def test_telecharger_rend_l_avancement_et_retablit_le_hors_ligne(monkeypatch):
-    vus = []
-
-    def espion(repo_id, revision, tqdm_class):
-        vus.append(constants.HF_HUB_OFFLINE)
-        return _faux_telechargement(repo_id, revision, tqdm_class)
-
-    etapes = list(telecharger([MODELE, MODELE], intervalle=0.01, telecharge=espion))
-    assert vus == [False, False]
-    assert constants.HF_HUB_OFFLINE is True
+def test_telecharger_rend_l_avancement():
+    script = "import os\nfor n in (0, 500, 1000): print(n, 1000, flush=True)\n" \
+             "assert os.environ['HF_HUB_OFFLINE'] == '0'"
+    etapes = list(telecharger([MODELE, MODELE], commande=_commande(script)))
+    assert [(e.rang, e.octets) for e in etapes if not e.fini][:4] == [
+        (1, 0), (1, 0), (1, 500), (1, 1000)]
     finales = [e for e in etapes if e.fini]
-    assert [e.rang for e in finales] == [1, 2]
-    assert finales[0].octets == finales[0].total == 1000
+    assert [(e.rang, e.octets, e.total) for e in finales] == [(1, 1000, 1000), (2, 1000, 1000)]
 
 
-def test_erreur_relancee_et_hors_ligne_retabli():
-    def echec(repo_id, revision, tqdm_class):
-        raise OSError("réseau coupé")
+def test_erreur_de_l_enfant_relancee():
+    script = "import sys\nprint('Traceback…', file=sys.stderr)\n" \
+             "print('OSError: réseau coupé', file=sys.stderr)\nsys.exit(1)"
+    with pytest.raises(RuntimeError, match="réseau coupé"):
+        list(telecharger([MODELE], commande=_commande(script)))
 
-    with pytest.raises(OSError, match="réseau coupé"):
-        list(telecharger([MODELE], intervalle=0.01, telecharge=echec))
-    assert constants.HF_HUB_OFFLINE is True
+
+def test_annulation_tue_l_enfant():
+    script = ("import os, time\nprint(os.getpid(), 0, flush=True)\n"
+              "while True:\n    time.sleep(0.05)")
+    etapes = telecharger([MODELE], commande=_commande(script))
+    next(etapes)
+    pid = next(etapes).octets   # l'enfant a publié son pid en guise d'octets
+    etapes.close()   # ce que fait Gradio à l'annulation
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_trois_modeles_dont_nanonets_facultatif():

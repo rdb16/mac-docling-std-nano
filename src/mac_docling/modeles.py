@@ -1,10 +1,9 @@
 """Modèles Hugging Face nécessaires, présence dans le cache et téléchargement.
 
-L'application tourne hors ligne (`HF_HUB_OFFLINE`) : aucun document ne peut
+L'application tourne hors ligne (`HF_HUB_OFFLINE=1`) : aucun document ne peut
 déclencher d'accès au réseau pendant une conversion. Le seul moment où la
 machine parle au Hub est le téléchargement des modèles manquants, lancé
-explicitement depuis l'interface ; le mode hors ligne est levé pour sa seule
-durée, puis rétabli.
+explicitement depuis l'interface et exécuté dans un processus à part.
 
 Le cache est vérifié sans réseau : pour chaque révision, Hugging Face garde la
 liste des fichiers du dépôt et leur taille (`trees/<commit>.json`). Un modèle
@@ -17,9 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
+from functools import cache
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -36,7 +39,8 @@ class Modele:
     requis: bool       # False : seule la bascule vers le VLM en a besoin
 
 
-def modeles() -> list[Modele]:
+@cache
+def modeles() -> tuple[Modele, ...]:
     """Les trois dépôts, lus dans la configuration effective de Docling.
 
     Lire les dépôts dans les options plutôt que les recopier évite qu'une mise
@@ -47,7 +51,7 @@ def modeles() -> list[Modele]:
     mise_en_page = _options_standard().layout_options.model_spec
     vlm = _options_nanonets(max_tokens=1).vlm_options
     moteur_vlm = vlm.engine_options.engine_type
-    return [
+    return (
         Modele(mise_en_page.repo_id, mise_en_page.revision,
                "analyse de la mise en page", "172 Mo", requis=True),
         # Docling écrit ce dépôt en dur dans TableStructureModel.download_models,
@@ -57,7 +61,7 @@ def modeles() -> list[Modele]:
         Modele(vlm.model_spec.get_repo_id(moteur_vlm),
                vlm.model_spec.get_revision(moteur_vlm),
                "bascule des pages faibles (Nanonets-OCR2)", "7,5 Go", requis=False),
-    ]
+    )
 
 
 # --------------------------------------------------------------------------
@@ -78,19 +82,20 @@ def en_cache(modele: Modele) -> bool:
         return False
     commit = reference.read_text().strip()
     instantane = depot / "snapshots" / commit
-    if not instantane.is_dir() or any((depot / "blobs").glob("*.incomplete")):
+    if not instantane.is_dir():
         return False
 
+    # La liste des fichiers fait foi. Les fichiers « .incomplete » ne servent
+    # qu'à défaut : un téléchargement annulé en laisse, que le suivant ne
+    # supprime pas une fois le modèle complet.
     arbre = depot / "trees" / f"{commit}.json"
-    if not arbre.is_file():
-        # Cache écrit par une version plus ancienne de huggingface_hub : faute
-        # de liste de fichiers, un instantané non vide fait foi.
-        return any(instantane.iterdir())
     try:
         fichiers = json.loads(arbre.read_text())["files"]
-    except (ValueError, KeyError) as err:
-        _log.warning("Liste de fichiers illisible pour %s : %s", modele.repo_id, err)
-        return any(instantane.iterdir())
+    except (OSError, ValueError, KeyError) as err:
+        # Cache écrit par une version plus ancienne de huggingface_hub.
+        _log.info("Pas de liste de fichiers pour %s (%s)", modele.repo_id, err)
+        return (any(instantane.iterdir())
+                and not any((depot / "blobs").glob("*.incomplete")))
     return all(
         (instantane / nom).is_file() and (instantane / nom).stat().st_size == meta["size"]
         for nom, meta in fichiers.items()
@@ -102,27 +107,20 @@ def manquants() -> list[Modele]:
 
 
 # --------------------------------------------------------------------------
-# Mode hors ligne
+# Téléchargement, dans un sous-processus
 # --------------------------------------------------------------------------
+#
+# Le serveur reste hors ligne en permanence : le téléchargement tourne dans un
+# processus à part, seul autorisé à joindre le Hub. Trois raisons :
+# - le moteur de transfert xet (Rust) garde ses connexions ouvertes après
+#   usage, et Python ne sait pas les fermer ; elles meurent avec le processus ;
+# - aucun code du serveur ne peut atteindre le réseau, même pendant un
+#   téléchargement ;
+# - « Annuler » arrête vraiment le transfert, en tuant le processus.
+#
+# Le processus enfant écrit sur sa sortie standard une ligne « octets total »
+# toutes les demi-secondes, et rien d'autre.
 
-def hors_ligne(actif: bool) -> None:
-    """Coupe ou rétablit l'accès au Hub, en cours d'exécution.
-
-    huggingface_hub lit HF_HUB_OFFLINE une fois, à l'import, dans
-    `constants.HF_HUB_OFFLINE` ; chaque requête interroge ensuite
-    `constants.is_offline_mode()`, qui relit cet attribut. Le modifier suffit
-    donc, sans relancer le serveur. La variable d'environnement est tenue à
-    jour pour les sous-processus.
-    """
-    from huggingface_hub import constants
-
-    os.environ["HF_HUB_OFFLINE"] = "1" if actif else "0"
-    constants.HF_HUB_OFFLINE = actif
-
-
-# --------------------------------------------------------------------------
-# Téléchargement
-# --------------------------------------------------------------------------
 
 @dataclass
 class Avancement:
@@ -169,44 +167,74 @@ def _octets(barres: list) -> tuple[int, int]:
     return int(barre.n), int(barre.total)
 
 
-def telecharger(a_telecharger: list[Modele], intervalle: float = 0.5,
-                telecharge: Callable[..., str] | None = None) -> Iterator[Avancement]:
+def _enfant(repo_id: str, revision: str, intervalle: float = 0.5) -> int:
+    """Corps du processus de téléchargement."""
+    from huggingface_hub import snapshot_download
+
+    barres: list = []
+    termine = threading.Event()
+
+    def rapporter() -> None:
+        while not termine.wait(intervalle):
+            print(*_octets(barres), flush=True)
+
+    threading.Thread(target=rapporter, daemon=True).start()
+    try:
+        snapshot_download(repo_id, revision=revision, tqdm_class=_suivi_tqdm(barres))
+    finally:
+        termine.set()
+    print(*_octets(barres), flush=True)
+    return 0
+
+
+def commande_enfant(modele: Modele) -> list[str]:
+    return [sys.executable, "-m", "mac_docling.modeles", modele.repo_id, modele.revision]
+
+
+def telecharger(a_telecharger: list[Modele],
+                commande: Callable[[Modele], list[str]] = commande_enfant,
+                ) -> Iterator[Avancement]:
     """Télécharge les modèles un à un, en rendant l'avancement au fil de l'eau.
 
-    Le mode hors ligne n'est levé que pendant l'appel et toujours rétabli,
-    même en cas d'erreur ou d'annulation. `telecharge` remplace
-    snapshot_download dans les tests.
+    Fermer le générateur (annulation) tue le processus en cours. `commande`
+    remplace le processus enfant dans les tests.
     """
-    if telecharge is None:
-        from huggingface_hub import snapshot_download as telecharge
+    environnement = {**os.environ, "HF_HUB_OFFLINE": "0"}
+    for rang, modele in enumerate(a_telecharger, start=1):
+        avancement = Avancement(rang, len(a_telecharger), modele)
+        yield replace(avancement)
 
-    hors_ligne(False)
-    try:
-        for rang, modele in enumerate(a_telecharger, start=1):
-            avancement = Avancement(rang, len(a_telecharger), modele)
-            barres: list = []
-            erreur: list[BaseException] = []
-            termine = threading.Event()
+        # Les erreurs vont dans un fichier plutôt qu'un tube : un tube plein
+        # bloquerait l'enfant, qu'on ne lit qu'à la fin.
+        with tempfile.TemporaryFile("w+") as erreurs:
+            processus = subprocess.Popen(
+                commande(modele), stdout=subprocess.PIPE, stderr=erreurs,
+                text=True, env=environnement,
+            )
+            try:
+                for ligne in processus.stdout:
+                    try:
+                        avancement.octets, avancement.total = map(int, ligne.split())
+                    except ValueError:
+                        continue
+                    yield replace(avancement)
+                code = processus.wait()
+            finally:
+                if processus.poll() is None:
+                    processus.kill()
+                    processus.wait()
+                processus.stdout.close()
 
-            def tache(modele=modele, barres=barres, erreur=erreur, termine=termine):
-                try:
-                    telecharge(modele.repo_id, revision=modele.revision,
-                               tqdm_class=_suivi_tqdm(barres))
-                except BaseException as err:  # relancée dans le générateur
-                    erreur.append(err)
-                finally:
-                    termine.set()
+            if code:
+                erreurs.seek(0)
+                dernieres = [ligne for ligne in erreurs.read().splitlines() if ligne.strip()]
+                raise RuntimeError(dernieres[-1] if dernieres
+                                   else f"le téléchargement a échoué (code {code})")
 
-            threading.Thread(target=tache, daemon=True).start()
-            yield replace(avancement)
-            while not termine.wait(intervalle):
-                avancement.octets, avancement.total = _octets(barres)
-                yield replace(avancement)
-            if erreur:
-                raise erreur[0]
-            avancement.octets, avancement.total = _octets(barres)
-            avancement.octets = avancement.total
-            avancement.fini = True
-            yield replace(avancement)
-    finally:
-        hors_ligne(True)
+        avancement.octets = avancement.total
+        avancement.fini = True
+        yield replace(avancement)
+
+
+if __name__ == "__main__":
+    sys.exit(_enfant(*sys.argv[1:3]))

@@ -20,17 +20,18 @@ import threading
 import time
 import zipfile
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 # Doit précéder l'import de gradio : la télémétrie est active par défaut et
 # poste vers api.gradio.app, contrôle de version compris.
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
-# Doit précéder l'import de huggingface_hub, qui lit la variable une seule
-# fois : sans elle, chaque chargement de modèle interroge le Hub pour vérifier
-# les révisions. Posée ici et non seulement dans lancer.sh pour couvrir un
-# lancement direct (`uv run python -m mac_docling.app`). HF_HUB_OFFLINE=0
-# reste possible pour le téléchargement initial des poids.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
+# Hors ligne en permanence : sans cela, chaque chargement de modèle interroge
+# le Hub pour vérifier les révisions, et un modèle absent serait téléchargé
+# en pleine conversion. Le seul accès au Hub est le téléchargement des modèles
+# manquants, lancé depuis l'interface (voir modeles.telecharger). Posée avant
+# l'import de huggingface_hub, qui lit la variable à ce moment-là.
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 # Tout ce que la session écrit sur disque vit sous une seule racine : les
 # lots (images normalisées, Markdown, archive) et le cache de Gradio, qui
@@ -53,6 +54,7 @@ atexit.register(nettoyer)
 
 import gradio as gr  # noqa: E402
 
+from mac_docling import modeles  # noqa: E402
 from mac_docling.documents import (  # noqa: E402
     EXTENSIONS_ACCEPTEES,
     EXTENSIONS_REFUSEES,
@@ -247,15 +249,23 @@ def _bandeau() -> str:
     )
 
 
-def barre(faites: int, total: int, note: str = "") -> str:
-    """Barre d'avancement en haut de page."""
-    part = (faites / total * 100) if total else 0
+def barre(faites: int, total: int, note: str = "", compteur: str | None = None) -> str:
+    """Barre d'avancement ; `compteur` remplace le décompte de pages à droite."""
+    part = min(faites / total * 100, 100) if total else 0
     fini = " finie" if total and faites >= total else ""
+    compteur = f"{faites}/{total} page(s)" if compteur is None else compteur
     return (
         f'<div class="piste"><div class="jauge{fini}" style="width:{part:.1f}%">'
         f'</div></div><div class="legende"><span>{html.escape(note)}</span>'
-        f'<span>{faites}/{total} page(s)</span></div>'
+        f'<span>{html.escape(compteur)}</span></div>'
     )
+
+
+def _taille(octets: int) -> str:
+    """Taille lisible, à la française : « 172 Mo », « 7,5 Go »."""
+    if octets >= 1e9:
+        return f"{octets / 1e9:.1f} Go".replace(".", ",")
+    return f"{octets / 1e6:.0f} Mo"
 
 
 def _ms(valeur) -> str:
@@ -289,6 +299,21 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
                [], "", "", None, None, _choix({}), {})
         return
 
+    absents = modeles.manquants()
+    if any(modele.requis for modele in absents):
+        yield (barre(0, 0, "modèles manquants"),
+               "✗ Les modèles du pipeline standard ne sont pas dans le cache : "
+               "téléchargez-les d'abord avec le panneau **Modèles** ci-dessus.",
+               [], "", "", None, None, _choix({}), {})
+        return
+    avertissements = []
+    if absents and routage_actif:
+        routage_actif = False
+        avertissements.append(
+            "⚠ Nanonets-OCR2 n'est pas dans le cache : la bascule est désactivée "
+            "pour ce lot. Téléchargez-le avec le panneau **Modèles** pour l'activer."
+        )
+
     dossier = Path(tempfile.mkdtemp(prefix="lot-", dir=RACINE_TEMP))
     travail = dossier / "travail"
 
@@ -319,7 +344,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
 
     produits: list[Path] = []
     lignes: list[list] = []
-    journal: list[str] = list(refus)
+    journal: list[str] = avertissements + refus
     markdown_final = ""
     faites = 0
     # Détail et Markdown de chaque document, pour les réafficher au choix une
@@ -448,6 +473,70 @@ def annuler():
     return barre(0, 0, "conversion annulée")
 
 
+def _liste_manquants(absents: list[modeles.Modele]) -> str:
+    """Ce qui manque, et ce que cela empêche."""
+    if any(modele.requis for modele in absents):
+        entete = ("⚠ **Modèles absents du cache : aucune conversion n'est possible "
+                  "sans eux.**")
+    else:
+        entete = ("Nanonets-OCR2 est absent du cache : la conversion fonctionne, "
+                  "mais sans bascule des pages faibles.")
+    lignes = [
+        f"- `{modele.repo_id}` ({modele.revision}) — {modele.role}, "
+        f"environ {modele.taille}" + ("" if modele.requis else ", facultatif")
+        for modele in absents
+    ]
+    return (f"### Modèles\n\n{entete}\n\n" + "\n".join(lignes)
+            + "\n\nLe téléchargement est le seul accès au réseau de l'application. "
+            "Il ne transmet aucun document.")
+
+
+def etat_modeles():
+    """Au chargement de la page : le panneau n'apparaît que s'il manque un modèle."""
+    absents = modeles.manquants()
+    return (gr.update(visible=bool(absents)),
+            _liste_manquants(absents) if absents else "", barre(0, 0, "", ""))
+
+
+def telecharger_modeles() -> Iterator[tuple]:
+    """Télécharge les modèles manquants en suivant les octets reçus."""
+    absents = modeles.manquants()
+    if not absents:
+        yield (gr.update(visible=False), "", barre(0, 0, "", ""))
+        return
+
+    liste = _liste_manquants(absents)
+    # closing() : si Gradio annule, le générateur est fermé sur-le-champ, ce
+    # qui tue le processus de téléchargement.
+    try:
+        with closing(modeles.telecharger(absents)) as etapes:
+            for etape in etapes:
+                note = f"{etape.rang}/{etape.nombre} · {etape.modele.repo_id.split('/')[-1]}"
+                compteur = (f"{_taille(etape.octets)} / {_taille(etape.total)}"
+                            if etape.total else "connexion au Hub…")
+                yield (gr.update(visible=True), liste,
+                       barre(etape.octets, etape.total, note, compteur))
+    except Exception as err:
+        _log.exception("Téléchargement des modèles interrompu")
+        yield (gr.update(visible=True),
+               f"{liste}\n\n✗ Téléchargement interrompu : {type(err).__name__} — {err}",
+               barre(0, 0, "échec", ""))
+        return
+
+    # Un échec de chargement mémorisé avant le téléchargement n'a plus lieu d'être.
+    MOTEUR.nanonets_echec = None
+    restants = modeles.manquants()
+    if restants:
+        yield (gr.update(visible=True),
+               _liste_manquants(restants)
+               + "\n\n✗ Après téléchargement, ces modèles restent incomplets.",
+               barre(0, 0, "incomplet", ""))
+        return
+    yield (gr.update(visible=True),
+           "### Modèles\n\n✓ Tous les modèles sont dans le cache.",
+           barre(1, 1, "terminé", ""))
+
+
 def fermer_serveur():
     """Arrête le processus après avoir prévenu le navigateur."""
     def arret() -> None:
@@ -466,6 +555,13 @@ def fermer_serveur():
 def construire() -> gr.Blocks:
     with gr.Blocks(title="SNTPK — OCR local", analytics_enabled=False) as interface:
         gr.HTML(_bandeau())
+
+        with gr.Group(visible=False) as panneau_modeles:
+            liste_modeles = gr.Markdown()
+            bouton_modeles = gr.Button("Télécharger les modèles manquants",
+                                       variant="primary")
+            progression_modeles = gr.HTML(barre(0, 0, "", ""))
+
         avancement = gr.HTML(barre(0, 0, "en attente"))
         arret = gr.HTML(visible=False)
 
@@ -524,11 +620,21 @@ def construire() -> gr.Blocks:
             traiter,
             inputs=[entree, seuil, routage, deduplication],
             outputs=sorties,
-            concurrency_limit=1,   # MPS et MLX se sérialisent de toute façon
+            # MPS et MLX se sérialisent de toute façon ; la file est partagée
+            # avec le téléchargement pour qu'aucune conversion ne charge un
+            # modèle en cours d'écriture dans le cache.
+            concurrency_limit=1, concurrency_id="modeles",
         )
+        telechargement = bouton_modeles.click(
+            telecharger_modeles,
+            outputs=[panneau_modeles, liste_modeles, progression_modeles],
+            concurrency_limit=1, concurrency_id="modeles",
+        )
+        interface.load(etat_modeles,
+                       outputs=[panneau_modeles, liste_modeles, progression_modeles])
         # Une page déjà partie au modèle va à son terme : l'annulation prend
         # effet entre deux pages.
-        arreter.click(annuler, outputs=avancement, cancels=[conversion])
+        arreter.click(annuler, outputs=avancement, cancels=[conversion, telechargement])
         nouveau.click(reinitialiser, outputs=[*sorties, entree], cancels=[conversion])
         choix.input(afficher, inputs=[choix, resultats],
                     outputs=[tableau, rendu, source])
