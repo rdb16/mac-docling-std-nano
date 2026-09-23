@@ -214,8 +214,12 @@ Exportez-les d'abord en JPEG.
 - **Bascule sur Nanonets-OCR2** — décochez pour rester en pipeline standard.
 - **Retirer en-têtes et pieds répétés** — voir ci-dessous. Défaut : activé.
 
-Trois boutons : **Convertir**, **Nouvel OCR** qui vide l'écran, et **Fermer le
-serveur** qui arrête le processus.
+Quatre boutons : **Convertir** ; **Annuler**, qui interrompt le lot entre deux
+pages ; **Nouvel OCR**, qui l'interrompt aussi et vide l'écran ; **Fermer le
+serveur**, qui arrête le processus et supprime les fichiers de la session.
+
+Quand le lot compte plusieurs documents, la liste **Document affiché** permet
+de revenir au détail et au Markdown de chacun.
 
 ## Déduplication des en-têtes et pieds de page
 

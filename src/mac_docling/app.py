@@ -284,10 +284,9 @@ def _ligne_page(donnees: dict) -> list:
 
 def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
     """Génère l'état de l'interface au fil des pages converties."""
-    vide = (barre(0, 0, "en attente"), "Déposez au moins un fichier.",
-            [], "", "", None, None)
     if not fichiers:
-        yield vide
+        yield (barre(0, 0, "en attente"), "Déposez au moins un fichier.",
+               [], "", "", None, None, _choix({}), {})
         return
 
     dossier = Path(tempfile.mkdtemp(prefix="lot-", dir=RACINE_TEMP))
@@ -315,7 +314,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
     total_pages = sum(max(d.pages, 1) for d in documents)
     if not documents:
         yield (barre(0, 0, "aucun fichier exploitable"), "\n\n".join(refus),
-               [], "", "", None, None)
+               [], "", "", None, None, _choix({}), {})
         return
 
     produits: list[Path] = []
@@ -323,15 +322,24 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
     journal: list[str] = list(refus)
     markdown_final = ""
     faites = 0
+    # Détail et Markdown de chaque document, pour les réafficher au choix une
+    # fois le lot fini ; le document en cours reste affiché pendant le lot.
+    resultats: dict[str, dict] = {}
+    libelle = ""
 
-    def etat(note: str):
+    def etat(note: str, archive: str | None = None):
+        resultats[libelle] = {"lignes": lignes, "markdown": markdown_final}
         return (barre(faites, total_pages, note), "\n\n".join(journal), lignes,
                 markdown_final, markdown_final,
-                [str(p) for p in produits] or None, None)
+                [str(p) for p in produits] or None, archive,
+                _choix(resultats, libelle), resultats)
 
     for index, document in enumerate(documents, start=1):
         entete = f"### {index}/{len(documents)} · {document.nom}"
+        # Préfixé du rang : deux documents homonymes restent distincts.
+        libelle = f"{index}. {document.nom}"
         lignes = []
+        markdown_final = ""
         vues_standard: set[int] = set()
         pages_avant = faites
         attendues = max(document.pages, 1)
@@ -413,14 +421,31 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
         archive = str(chemin_archive)
 
     shutil.rmtree(travail, ignore_errors=True)
-    yield (barre(total_pages, total_pages, "terminé"), "\n\n".join(journal),
-           lignes, markdown_final, markdown_final,
-           [str(p) for p in produits] or None, archive)
+    faites = total_pages
+    yield etat("terminé", archive)
+
+
+def _choix(resultats: dict, valeur: str | None = None):
+    """Liste des documents du lot, masquée tant qu'il n'y en a qu'un."""
+    return gr.update(choices=list(resultats), value=valeur or None,
+                     visible=len(resultats) > 1)
+
+
+def afficher(libelle: str | None, resultats: dict):
+    """Réaffiche le détail et le Markdown d'un document du lot."""
+    resultat = (resultats or {}).get(libelle) or {"lignes": [], "markdown": ""}
+    return resultat["lignes"], resultat["markdown"], resultat["markdown"]
 
 
 def reinitialiser():
     """Vide l'écran pour un nouveau document."""
-    return (barre(0, 0, "en attente"), "Prêt.", [], "", "", None, None, None)
+    return (barre(0, 0, "en attente"), "Prêt.", [], "", "", None, None,
+            _choix({}), {}, None)
+
+
+def annuler():
+    """Signale l'arrêt ; Gradio interrompt le lot à la fin de la page en cours."""
+    return barre(0, 0, "conversion annulée")
 
 
 def fermer_serveur():
@@ -468,10 +493,14 @@ def construire() -> gr.Blocks:
 
         with gr.Row():
             lancer = gr.Button("Convertir", variant="primary", scale=2)
+            arreter = gr.Button("Annuler", scale=1)
             nouveau = gr.Button("Nouvel OCR", scale=1)
             fermer = gr.Button("Fermer le serveur", variant="stop", scale=1)
 
         etat = gr.Markdown("Prêt.")
+        choix = gr.Dropdown(label="Document affiché", choices=[], visible=False,
+                            interactive=True)
+        resultats = gr.State({})
         tableau = gr.Dataframe(
             headers=COLONNES, label="Détail par page", interactive=False,
             wrap=True, column_count=(len(COLONNES), "fixed"),
@@ -488,15 +517,21 @@ def construire() -> gr.Blocks:
             archive = gr.File(label="Archive (plusieurs documents)",
                               interactive=False)
 
-        sorties = [avancement, etat, tableau, rendu, source, fichiers_md, archive]
+        sorties = [avancement, etat, tableau, rendu, source, fichiers_md, archive,
+                   choix, resultats]
 
-        lancer.click(
+        conversion = lancer.click(
             traiter,
             inputs=[entree, seuil, routage, deduplication],
             outputs=sorties,
             concurrency_limit=1,   # MPS et MLX se sérialisent de toute façon
         )
-        nouveau.click(reinitialiser, outputs=[*sorties, entree])
+        # Une page déjà partie au modèle va à son terme : l'annulation prend
+        # effet entre deux pages.
+        arreter.click(annuler, outputs=avancement, cancels=[conversion])
+        nouveau.click(reinitialiser, outputs=[*sorties, entree], cancels=[conversion])
+        choix.input(afficher, inputs=[choix, resultats],
+                    outputs=[tableau, rendu, source])
         fermer.click(fermer_serveur, outputs=arret)
 
     return interface
