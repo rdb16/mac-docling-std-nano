@@ -51,6 +51,36 @@ def note_declenche(note: str | None, seuil: str) -> bool:
     return ORDRE_NOTES.index(note) <= ORDRE_NOTES.index(seuil)
 
 
+def motif_bascule(reussi: bool, statut: str, note: str | None, seuil: str,
+                  markdown: str) -> str:
+    """Pourquoi une page doit partir au VLM, ou chaîne vide si elle reste.
+
+    L'échec passe en premier : une page en échec n'a souvent pas de note, et
+    « note None ≤ seuil » masquerait la vraie cause.
+    """
+    if not reussi:
+        return f"conversion en échec ({statut})"
+    if note_declenche(note, seuil):
+        return f"note {note} ≤ seuil {seuil}" if note in ORDRE_NOTES else "note absente"
+    if len(markdown.strip()) < CARACTERES_MINIMUM:
+        return "page quasi vide"
+    return ""
+
+
+def adopter_vlm(markdown_vlm: str, markdown_standard: str, anomalie: str) -> bool:
+    """La sortie du VLM doit-elle remplacer celle du pipeline standard ?
+
+    La page n'est partie au VLM que parce que le pipeline standard la jugeait
+    faible : une sortie saine du VLM fait donc foi, même plus courte — un OCR
+    raté produit souvent plus de caractères parasites que de texte juste. On
+    ne garde le standard que si le VLM boucle ou ne rend presque rien.
+    """
+    vlm = markdown_vlm.strip()
+    if not vlm or anomalie:
+        return False
+    return len(vlm) >= CARACTERES_MINIMUM or len(vlm) > len(markdown_standard.strip())
+
+
 def _nombre(valeur) -> float | None:
     try:
         valeur = float(valeur)
@@ -273,16 +303,10 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
              "statut": resultat.status.value},
         )
 
-        note = confiance.get("note")
-        besoin = routage_actif and (
-            not reussi
-            or note_declenche(note, seuil)
-            or len(markdown.strip()) < CARACTERES_MINIMUM
-        )
+        motif = motif_bascule(reussi, resultat.status.value, confiance.get("note"),
+                              seuil, markdown)
 
-        if besoin:
-            motif = (f"note {note} ≤ seuil {seuil}" if note_declenche(note, seuil)
-                     else "page quasi vide" if reussi else resultat.status.value)
+        if routage_actif and motif:
             yield Evenement(
                 Genre.PAGE_BASCULE, document.nom,
                 f"page {numero} : {motif} → Nanonets-OCR2",
@@ -320,11 +344,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
             duree_vlm = round((time.perf_counter() - depart) * 1000)
             anomalie = surveillance.diagnostiquer(markdown_vlm, 1)
 
-            # On n'adopte la sortie du VLM que si elle apporte vraiment du
-            # texte et ne boucle pas.
-            adoptee = bool(markdown_vlm.strip()) and not anomalie and (
-                len(markdown_vlm.strip()) > len(markdown.strip())
-            )
+            adoptee = adopter_vlm(markdown_vlm, markdown, anomalie)
             if adoptee:
                 markdown = markdown_vlm
                 pages_routees.append(numero)
