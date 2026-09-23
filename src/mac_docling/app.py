@@ -27,7 +27,7 @@ from pathlib import Path  # noqa: E402
 import gradio as gr  # noqa: E402
 
 from mac_docling.documents import EXTENSIONS_ACCEPTEES, preparer  # noqa: E402
-from mac_docling.moteur import ORDRE_NOTES, Moteur, convertir  # noqa: E402
+from mac_docling.moteur import ORDRE_NOTES, Config, Genre, Moteur, convertir  # noqa: E402
 
 _log = logging.getLogger(__name__)
 
@@ -235,8 +235,8 @@ def _ms(valeur) -> str:
 def _ligne_page(donnees: dict) -> list:
     confiance = donnees.get("confiance") or {}
     etapes = donnees.get("etapes") or {}
-    moteur = "standard" if donnees["config"] == "A_standard" else "Nanonets"
-    if donnees["config"] == "C_nanonets":
+    moteur = "standard" if donnees["config"] == Config.STANDARD else "Nanonets"
+    if donnees["config"] == Config.NANONETS:
         bascule = "adoptée" if donnees.get("adoptee") else "écartée"
     else:
         bascule = ""
@@ -302,19 +302,19 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
                                    dedupliquer):
             donnees = evenement.donnees
 
-            if evenement.genre == "document.debut":
+            if evenement.genre == Genre.DOCUMENT_DEBUT:
                 extra = " · image normalisée" if donnees.get("normalise") else ""
                 journal.append(f"{entete}\n{evenement.message}{extra}")
 
-            elif evenement.genre == "modele":
+            elif evenement.genre == Genre.MODELE:
                 duree = f" ({_ms(donnees.get('ms'))})" if donnees.get("ms") else ""
                 journal.append(f"· {evenement.message}{duree}")
 
-            elif evenement.genre == "page.fin":
+            elif evenement.genre == Genre.PAGE_FIN:
                 lignes = lignes + [_ligne_page(donnees)]
                 # L'avancement compte les pages, pas les passages : une page
                 # repassée au VLM ne la fait pas avancer deux fois.
-                if donnees["config"] == "A_standard":
+                if donnees["config"] == Config.STANDARD:
                     numero = donnees["page"]
                     if numero not in vues_standard:
                         vues_standard.add(numero)
@@ -322,13 +322,13 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
                 if donnees.get("alerte"):
                     journal.append(f"⚠ page {donnees['page']} : {donnees['alerte']}")
 
-            elif evenement.genre == "page.bascule":
+            elif evenement.genre == Genre.PAGE_BASCULE:
                 journal.append(f"⚡ **{evenement.message}**")
 
-            elif evenement.genre == "erreur":
+            elif evenement.genre == Genre.ERREUR:
                 journal.append(f"✗ {evenement.message}")
 
-            elif evenement.genre == "document.fin":
+            elif evenement.genre == Genre.DOCUMENT_FIN:
                 markdown_final = donnees["markdown"]
                 cible = dossier / f"{document.nom}.md"
                 cible.write_text(markdown_final, encoding="utf-8")

@@ -18,6 +18,7 @@ import math
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from docling.datamodel.settings import settings
 
@@ -62,12 +63,29 @@ def _nombre(valeur) -> float | None:
 # Événements émis vers l'interface
 # --------------------------------------------------------------------------
 
+class Genre(StrEnum):
+    """Nature d'un événement, qui dit comment l'interpréter."""
+
+    DOCUMENT_DEBUT = "document.debut"
+    MODELE = "modele"
+    PAGE_FIN = "page.fin"
+    PAGE_BASCULE = "page.bascule"
+    DOCUMENT_FIN = "document.fin"
+    ERREUR = "erreur"
+
+
+class Config(StrEnum):
+    """Pipeline qui a produit une page."""
+
+    STANDARD = "A_standard"
+    NANONETS = "C_nanonets"
+
+
 @dataclass
 class Evenement:
-    """Un fait à afficher. `genre` dit comment l'interpréter."""
+    """Un fait à afficher."""
 
-    genre: str            # document.debut | modele | page.fin | page.bascule
-                          # | document.fin | erreur
+    genre: Genre
     document: str = ""
     message: str = ""
     donnees: dict = field(default_factory=dict)
@@ -164,6 +182,10 @@ class Moteur:
         return self._nanonets
 
     @property
+    def standard_charge(self) -> bool:
+        return self._standard is not None
+
+    @property
     def nanonets_charge(self) -> bool:
         return self._nanonets is not None
 
@@ -207,7 +229,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
     par la sortie du VLM, puis retire les en-têtes et pieds de page répétés.
     """
     yield Evenement(
-        "document.debut", document.nom,
+        Genre.DOCUMENT_DEBUT, document.nom,
         f"{document.type_document}, {document.pages} page(s)",
         {"pages": document.pages, "type": document.type_document,
          "normalise": document.normalise},
@@ -215,11 +237,11 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
 
     debut_document = time.perf_counter()
 
-    if moteur._standard is None:
-        yield Evenement("modele", document.nom, "chargement du pipeline standard…")
+    if not moteur.standard_charge:
+        yield Evenement(Genre.MODELE, document.nom, "chargement du pipeline standard…")
         depart = time.perf_counter()
         moteur.standard()
-        yield Evenement("modele", document.nom, "pipeline standard prêt",
+        yield Evenement(Genre.MODELE, document.nom, "pipeline standard prêt",
                         {"ms": round((time.perf_counter() - depart) * 1000)})
 
     morceaux: list[str] = []
@@ -233,7 +255,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                 document.chemin, raises_on_error=False, page_range=(numero, numero)
             )
         except Exception as err:
-            yield Evenement("erreur", document.nom,
+            yield Evenement(Genre.ERREUR, document.nom,
                             f"page {numero} : {type(err).__name__} — {err}",
                             {"page": numero})
             continue
@@ -244,8 +266,8 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
         confiance = _confiance(resultat)
 
         yield Evenement(
-            "page.fin", document.nom, "",
-            {"page": numero, "total": total, "config": "A_standard",
+            Genre.PAGE_FIN, document.nom, "",
+            {"page": numero, "total": total, "config": Config.STANDARD,
              "ms": duree, "etapes": _etapes(resultat),
              "confiance": confiance, "caracteres": len(markdown),
              "statut": resultat.status.value},
@@ -262,7 +284,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
             motif = (f"note {note} ≤ seuil {seuil}" if note_declenche(note, seuil)
                      else "page quasi vide" if reussi else resultat.status.value)
             yield Evenement(
-                "page.bascule", document.nom,
+                Genre.PAGE_BASCULE, document.nom,
                 f"page {numero} : {motif} → Nanonets-OCR2",
                 {"page": numero, "motif": motif},
             )
@@ -270,12 +292,12 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
             # Le chargement du VLM est chronométré à part : le mêler au temps
             # de la page rendrait la première bascule incomparable aux suivantes.
             if not moteur.nanonets_charge:
-                yield Evenement("modele", document.nom,
+                yield Evenement(Genre.MODELE, document.nom,
                                 "chargement de Nanonets-OCR2…")
                 depart = time.perf_counter()
                 moteur.nanonets()
                 yield Evenement(
-                    "modele", document.nom, "Nanonets-OCR2 prêt",
+                    Genre.MODELE, document.nom, "Nanonets-OCR2 prêt",
                     {"ms": round((time.perf_counter() - depart) * 1000)},
                 )
 
@@ -291,7 +313,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                 )
             except Exception as err:
                 markdown_vlm = ""
-                yield Evenement("erreur", document.nom,
+                yield Evenement(Genre.ERREUR, document.nom,
                                 f"page {numero} via Nanonets : {err}",
                                 {"page": numero})
 
@@ -308,8 +330,8 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                 pages_routees.append(numero)
 
             yield Evenement(
-                "page.fin", document.nom, anomalie,
-                {"page": numero, "total": total, "config": "C_nanonets",
+                Genre.PAGE_FIN, document.nom, anomalie,
+                {"page": numero, "total": total, "config": Config.NANONETS,
                  "ms": duree_vlm, "etapes": {},
                  "confiance": {}, "caracteres": len(markdown_vlm),
                  "adoptee": adoptee, "alerte": anomalie,
@@ -320,7 +342,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
 
     complet, rapport = deduplication.assembler(morceaux, actif=dedupliquer)
     yield Evenement(
-        "document.fin", document.nom, rapport.resume(),
+        Genre.DOCUMENT_FIN, document.nom, rapport.resume(),
         {"ms": round((time.perf_counter() - debut_document) * 1000),
          "pages_routees": pages_routees, "caracteres": len(complet),
          "markdown": complet, "lignes_retirees": rapport.lignes_retirees},
