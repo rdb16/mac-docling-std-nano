@@ -11,232 +11,94 @@ Le moteur est **[Docling](https://github.com/docling-project/docling) 2.129**,
 la bibliothèque d'analyse documentaire d'IBM Research, utilisée ici dans ses
 deux pipelines et sans aucun de ses connecteurs distants.
 
-Le document est découpé page par page. Chaque page passe au pipeline Docling
-standard avec l'OCR Apple Vision en français et reçoit une note de confiance ;
-celles qui passent sous le seuil sont repassées à Nanonets-OCR2 via MLX. Les
-en-têtes et pieds de page répétés sont retirés avant l'assemblage final.
-
-L'interface affiche une barre d'avancement, le temps de chaque étape, la note
-de chaque page et les bascules, au fil de l'eau.
-
-## Ce qui fait tourner tout ça
-
-| Composant | Version | Rôle |
-|-----------|---------|------|
-| [`docling`](https://github.com/docling-project/docling) | 2.129.0 | orchestration des deux pipelines, notes de confiance, export Markdown |
-| `docling-core` | 2.98.0 | modèle de document et sérialisation |
-| `docling-ibm-models` | 4.0.3 | modèles de mise en page et TableFormer |
-| `docling-parse` | 7.21.0 | lecture bas niveau des PDF |
-| `ocrmac` | 1.0.1 | pont vers Apple Vision, l'OCR fourni avec macOS |
-| `mlx` / `mlx-vlm` | 0.32.2 / 0.7.2 | exécution de Nanonets-OCR2 sur le GPU Apple |
-| `gradio` | 6.28.0 | interface web, servie sur la boucle locale seulement |
-
-Le `pyproject.toml` épingle `docling[ocrmac,vlm]>=2.129,<3` : la borne haute
-évite qu'une version majeure change les noms de pipelines ou le calcul des
-notes de confiance sans prévenir. Le `uv.lock` versionné va plus loin et fige
-les 165 paquets de la résolution, aux versions exactes de ce tableau — celles
-sur lesquelles les mesures de ce README ont été faites.
-
-Aucune de ces briques n'appelle de service distant dans cette configuration —
-c'est vérifiable, voir Confidentialité.
+Chaque page passe au pipeline Docling standard, avec l'OCR Apple Vision en
+français, et reçoit une note de confiance. Les pages faibles sont repassées à
+Nanonets-OCR2, un modèle de vision exécuté sur le GPU du Mac. Les en-têtes et
+pieds de page répétés sont retirés avant l'assemblage final.
 
 ## Installation
 
+Il faut un Mac Apple Silicon et [uv](https://docs.astral.sh/uv/).
+
 ```bash
 uv sync --frozen
-```
-
-`--frozen` interdit à uv de recalculer la résolution : vous obtenez le contenu
-exact de `uv.lock`, et non la dernière version compatible du moment. Sans ce
-drapeau, uv réécrirait le verrou et pourrait installer un Docling plus récent
-que celui sur lequel l'outil a été mesuré.
-
-Pour modifier le code plutôt que seulement l'utiliser, l'installation éditable
-reste possible — mais elle ignore le verrou :
-
-```bash
-uv venv --python 3.12 .venv
-VIRTUAL_ENV=.venv uv pip install -e .
-```
-
-Les tests et le linter sont dans le groupe `dev`, installé par défaut par
-`uv sync` :
-
-```bash
-uv run pytest
-uv run ruff check .
-```
-
-## Modèles
-
-L'application a besoin de trois modèles publics Hugging Face, environ 8 Go en
-tout. Aucun compte Hugging Face n'est nécessaire.
-
-| Dépôt | Rôle | Sur disque | Sans lui |
-|-------|------|------------|----------|
-| `docling-project/docling-layout-heron` | découpage de la page en régions | 172 Mo | aucune conversion |
-| `docling-project/docling-models` (`v2.3.0`) | structure des tableaux (TableFormer) | 358 Mo | aucune conversion |
-| `mlx-community/Nanonets-OCR2-3B-bf16` | bascule des pages faibles | 7,5 Go | conversion sans bascule |
-
-L'OCR n'apparaît pas dans cette liste : Apple Vision est fourni avec macOS.
-
-### Au premier lancement
-
-À l'ouverture de la page, l'application vérifie sans réseau que chaque modèle
-est complet dans le cache Hugging Face (`~/.cache/huggingface/hub`) : chaque
-fichier de la révision attendue doit y être, à la bonne taille. Un
-téléchargement interrompu est donc repéré.
-
-- **Tout est là** : rien ne s'affiche, l'application est prête.
-- **Il manque un modèle** : un panneau **Modèles** apparaît en haut de page,
-  avec la liste de ce qui manque et un bouton **Télécharger les modèles
-  manquants**. Une barre suit les octets reçus ; **Annuler** interrompt le
-  téléchargement.
-
-Nanonets est facultatif. Ses 7,5 Go ne se justifient que pour les scans et les
-tickets de caisse, où le pipeline standard perd le texte classé en image.
-Sans lui, la conversion fonctionne et le journal indique que la bascule est
-désactivée.
-
-### Téléchargement et réseau
-
-Le serveur reste hors ligne en permanence (`HF_HUB_OFFLINE=1`), y compris
-pendant un téléchargement. Celui-ci tourne dans un processus à part, le seul
-autorisé à joindre le Hub. Ses connexions disparaissent avec lui, et il ne
-transmet aucun document. Une conversion lancée pendant le téléchargement
-attend qu'il se termine.
-
-### Préchargement en ligne de commande
-
-Pour préparer un poste sans ouvrir l'interface :
-
-```bash
-.venv/bin/hf download docling-project/docling-layout-heron --revision main
-.venv/bin/hf download docling-project/docling-models --revision v2.3.0
-.venv/bin/hf download mlx-community/Nanonets-OCR2-3B-bf16 --revision main
-```
-
-N'utilisez pas `docling-tools models download` : cette commande écrit dans
-`~/.cache/docling/models`, que l'application ne lit pas.
-
-## Lancer
-
-```bash
 ./lancer.sh
 ```
 
 L'interface s'ouvre sur <http://127.0.0.1:7860>.
 
-## Pourquoi page par page
+Au premier lancement, un panneau **Modèles** propose de télécharger les
+modèles manquants : environ 8 Go, dont 7,5 Go pour Nanonets-OCR2, facultatif.
+C'est le seul moment où l'application utilise le réseau, et seulement quand
+vous cliquez.
 
-Docling ne donne la confiance qu'une fois la conversion faite, et la note du
-document masque ses pages faibles : un rapport noté *good* à 0,83 contenait
-une page à 0,67 que seul un examen par page repère.
+## L'interface
 
-Convertir page par page coûte 1,1× le temps d'une conversion globale, pour des
-notes identiques. Ce surcoût achète deux choses : l'affichage en direct dès
-qu'une page est prête, et l'envoi au VLM des seules pages faibles. Sur un
-rapport de quatre pages dont une est faible, cela représente une page à
-Nanonets au lieu de quatre — soit environ 15 s au lieu de 60 s.
+**Déposer** un ou plusieurs PDF ou images dans le pavé **PDF et images**.
+
+**Réglages**, à droite :
+
+- **Seuil de bascule** — une page notée à ce niveau ou en dessous part à
+  Nanonets-OCR2. Défaut : `fair`.
+- **Bascule sur Nanonets-OCR2** — décochez pour rester en pipeline standard.
+- **Retirer en-têtes et pieds répétés** — activé par défaut.
+
+**Boutons :**
+
+- **Convertir** lance le lot.
+- **Annuler** l'interrompt entre deux pages.
+- **Nouvel OCR** l'interrompt aussi et vide l'écran.
+- **Fermer le serveur** arrête l'application et supprime les fichiers de la
+  session.
+- **Télécharger les modèles manquants**, dans le panneau **Modèles**, n'apparaît
+  que s'il manque un modèle.
+
+**Résultats**, au fil de la conversion :
+
+- une barre d'avancement et un journal (bascules, erreurs, lignes retirées) ;
+- le **détail par page** : temps de chaque étape, note de confiance, bascule ;
+- le Markdown, **rendu** ou **source** ;
+- **Markdown produit** : un fichier `.md` par document ;
+- **Archive** : un `.zip` de tous les `.md`, dès deux documents ;
+- **Document affiché** : dès deux documents, pour revenir à chacun.
+
+Les résultats disparaissent à la fermeture du serveur : téléchargez-les avant.
+
+## Formats acceptés
+
+PDF, et les images `jpg`, `jpeg`, `png`, `tif`, `tiff`, `bmp`, `webp`, `jp2`
+et `gif`. Toutes les pages d'un TIFF multipage sont converties.
+
+Les photos `heic` et `heif` sont refusées : trop volumineuses pour l'OCR.
+Exportez-les d'abord en JPEG.
 
 ## Confidentialité
 
 C'est la raison d'être de ce dépôt. Un OCR en ligne suppose de téléverser le
 document : pour une facture, un bilan sanguin ou un contrat, cela signifie
 confier la pièce à un tiers, avec la rétention et la localisation qu'il
-pratique. Ici le document ne quitte pas le disque, et Docling est configuré
-pour que ses propres échappatoires réseau soient fermées.
+pratique. Ici le document ne quitte pas le disque.
 
-Cinq verrous, posés dans `lancer.sh` et `app.py` :
+Ce qui est garanti :
 
-| Verrou | Ce qu'il bloque |
-|--------|-----------------|
-| `GRADIO_ANALYTICS_ENABLED=False` et `analytics_enabled=False` | Gradio poste sinon vers `api.gradio.app`, contrôle de version compris |
-| Police système, jamais `gr.themes.GoogleFont` | le chargement de `fonts.googleapis.com` par le navigateur |
-| `server_name="127.0.0.1"`, `share=False` | toute écoute hors boucle locale, tout tunnel public |
-| `HF_HUB_OFFLINE=1`, imposé par `app.py` | tout appel au Hub depuis le serveur ; seul le processus de téléchargement des modèles, lancé à la main, y accède |
-| `enable_remote_services=False` | tout service d'inférence distant côté Docling |
+- **Aucune sortie réseau pendant la conversion**, mesurée et non supposée
+  (voir [Verrous réseau](#verrous-réseau)).
+- **Aucun service d'inférence distant** : les deux modèles tournent sur le GPU
+  de la machine.
+- **Aucune trace après la fermeture du serveur** : copies des documents
+  déposés, images normalisées, Markdown et archive vivent dans un unique
+  dossier temporaire. Il est supprimé par **Fermer le serveur**, par Ctrl-C,
+  par `kill` ou à la fermeture du terminal.
 
-Ces affirmations se vérifient :
-
-```bash
-./lancer.sh &
-.venv/bin/python verifier_reseau.py mon_document.pdf
-```
-
-Le script lance une conversion réelle et échantillonne les connexions du
-processus serveur toutes les 0,4 s pendant toute sa durée, via `lsof`. Il
-signale toute connexion vers autre chose que la boucle locale.
-
-### Portée exacte de la garantie
-
-Ce qui est couvert :
-
-- **Aucune sortie réseau pendant la conversion**, mesurée et non supposée.
-- **Aucun service d'inférence distant** : `enable_remote_services=False`
-  côté Docling, et les deux modèles tournent sur le GPU de la machine.
-- **Aucune trace laissée après la fermeture du serveur** : les copies des
-  documents déposés (cache de Gradio), les images normalisées, les Markdown
-  produits et l'archive vivent sous un unique dossier temporaire, supprimé
-  par le bouton **Fermer le serveur**, par Ctrl-C, par `kill` ou à la
-  fermeture du terminal.
-
-Ce qui ne l'est pas, et qu'il faut savoir :
+Ce qu'il faut savoir :
 
 - Le **téléchargement des modèles** passe par Hugging Face. Il ne transmet
-  aucun document, mais c'est le seul moment où la machine parle au réseau :
-  il n'a lieu que sur demande, depuis le panneau **Modèles**.
-- Les **Markdown produits disparaissent avec le serveur** : téléchargez-les
-  avant de le fermer. Un arrêt brutal (`kill -9`, coupure de courant) ne
-  laisse pas le temps de nettoyer ; le dossier `mac-docling-*` reste alors
-  dans le dossier temporaire du système.
+  aucun document et n'a lieu que sur demande.
+- Un **arrêt brutal** (`kill -9`, coupure de courant) ne laisse pas le temps
+  de nettoyer : le dossier `mac-docling-*` reste alors dans le dossier
+  temporaire du système.
 - Le chiffrement du disque et l'accès physique au poste relèvent de macOS,
   pas de cet outil.
-
-## Formats acceptés
-
-PDF, et les images `jpg`, `jpeg`, `png`, `tif`, `tiff`, `bmp`, `webp`.
-
-Les formats que Docling ne lit pas (`jp2`, `gif`) sont transcodés en
-PNG dans un dossier temporaire, et les images dont le plus grand côté dépasse
-3000 px sont rééchantillonnées — l'OCR les agrandit ensuite d'un facteur 3, ce
-qui dépasserait la protection de Pillow contre les images pièges. Le fichier
-d'origine n'est jamais modifié.
-
-Les photos `heic` et `heif` sont refusées : trop volumineuses pour l'OCR.
-Exportez-les d'abord en JPEG.
-
-## Réglages de l'interface
-
-- **Seuil de bascule** — une page notée à ce niveau ou en dessous part au VLM.
-  Docling classe ainsi : `poor` sous 0,5, `fair` sous 0,8, `good` sous 0,9,
-  `excellent` au-delà. Défaut : `fair`.
-- **Bascule sur Nanonets-OCR2** — décochez pour rester en pipeline standard.
-- **Retirer en-têtes et pieds répétés** — voir ci-dessous. Défaut : activé.
-
-Quatre boutons : **Convertir** ; **Annuler**, qui interrompt le lot entre deux
-pages ; **Nouvel OCR**, qui l'interrompt aussi et vide l'écran ; **Fermer le
-serveur**, qui arrête le processus et supprime les fichiers de la session.
-
-Quand le lot compte plusieurs documents, la liste **Document affiché** permet
-de revenir au détail et au Markdown de chacun.
-
-## Déduplication des en-têtes et pieds de page
-
-Les pages étant converties séparément, chacune rapporte l'en-tête et le pied
-du document. Concaténées telles quelles, ces lignes reviennent autant de fois
-qu'il y a de pages.
-
-Le critère retenu est la fréquence **entre les pages**, pas la position dans
-la page : après remise en ordre de lecture, Docling place souvent l'en-tête au
-milieu du Markdown. Une ligne vue sur au moins 60 % des pages d'un document
-d'au moins trois pages est tenue pour un en-tête ou un pied ; sa première
-occurrence est conservée, les suivantes sont retirées. Les lignes de tableau
-sont épargnées : deux pages peuvent légitimement porter la même donnée.
-
-Mesuré sur un compte rendu de laboratoire de treize pages : 276 lignes
-retirées sur 691, soit 18 % de caractères en moins, sans perte de contenu.
-Sur une facture d'une page, rien n'est retiré.
 
 ## Limites connues
 
@@ -278,3 +140,149 @@ pas redistribués ici : le dépôt ne fait qu'indiquer comment les télécharger
 Vérifiez leurs conditions propres avant un usage commercial, en particulier
 celles de [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B),
 dérivé de Qwen2.5-VL-3B-Instruct.
+
+## Détails techniques
+
+### Composants et versions
+
+| Composant | Version | Rôle |
+|-----------|---------|------|
+| [`docling`](https://github.com/docling-project/docling) | 2.129.0 | orchestration des deux pipelines, notes de confiance, export Markdown |
+| `docling-core` | 2.98.0 | modèle de document et sérialisation |
+| `docling-ibm-models` | 4.0.3 | modèles de mise en page et TableFormer |
+| `docling-parse` | 7.21.0 | lecture bas niveau des PDF |
+| `ocrmac` | 1.0.1 | pont vers Apple Vision, l'OCR fourni avec macOS |
+| `mlx` / `mlx-vlm` | 0.32.2 / 0.7.2 | exécution de Nanonets-OCR2 sur le GPU Apple |
+| `gradio` | 6.28.0 | interface web, servie sur la boucle locale seulement |
+
+Le `pyproject.toml` épingle `docling[ocrmac,vlm]>=2.129,<3` : la borne haute
+évite qu'une version majeure change les noms de pipelines ou le calcul des
+notes de confiance sans prévenir. Le `uv.lock` versionné va plus loin et fige
+les paquets de la résolution, aux versions exactes de ce tableau — celles sur
+lesquelles les mesures de ce README ont été faites.
+
+`uv sync --frozen` interdit à uv de recalculer la résolution : vous obtenez le
+contenu exact de `uv.lock`, et non la dernière version compatible du moment.
+
+### Développement
+
+Les tests et le linter sont dans le groupe `dev`, installé par défaut par
+`uv sync` :
+
+```bash
+uv run pytest
+uv run ruff check .
+```
+
+L'installation éditable reste possible, mais elle ignore le verrou :
+
+```bash
+uv venv --python 3.12 .venv
+VIRTUAL_ENV=.venv uv pip install -e .
+```
+
+### Modèles
+
+| Dépôt | Rôle | Sur disque | Sans lui |
+|-------|------|------------|----------|
+| `docling-project/docling-layout-heron` | découpage de la page en régions | 172 Mo | aucune conversion |
+| `docling-project/docling-models` (`v2.3.0`) | structure des tableaux (TableFormer) | 358 Mo | aucune conversion |
+| `mlx-community/Nanonets-OCR2-3B-bf16` | bascule des pages faibles | 7,5 Go | conversion sans bascule |
+
+L'OCR n'apparaît pas dans cette liste : Apple Vision est fourni avec macOS.
+Aucun compte Hugging Face n'est nécessaire.
+
+**Vérification.** À l'ouverture de la page, l'application vérifie sans réseau
+que chaque modèle est complet dans le cache Hugging Face
+(`~/.cache/huggingface/hub`) : chaque fichier de la révision attendue doit y
+être, à la bonne taille. Un téléchargement interrompu est donc repéré.
+
+**Téléchargement.** Le serveur reste hors ligne en permanence
+(`HF_HUB_OFFLINE=1`), y compris pendant un téléchargement. Celui-ci tourne dans
+un processus à part, le seul autorisé à joindre le Hub. Ses connexions
+disparaissent avec lui. Une conversion lancée pendant le téléchargement
+attend qu'il se termine.
+
+**Préchargement en ligne de commande**, pour préparer un poste sans ouvrir
+l'interface :
+
+```bash
+.venv/bin/hf download docling-project/docling-layout-heron --revision main
+.venv/bin/hf download docling-project/docling-models --revision v2.3.0
+.venv/bin/hf download mlx-community/Nanonets-OCR2-3B-bf16 --revision main
+```
+
+N'utilisez pas `docling-tools models download` : cette commande écrit dans
+`~/.cache/docling/models`, que l'application ne lit pas.
+
+### Pourquoi page par page
+
+Docling ne donne la confiance qu'une fois la conversion faite, et la note du
+document masque ses pages faibles : un rapport noté *good* à 0,83 contenait
+une page à 0,67 que seul un examen par page repère.
+
+Convertir page par page coûte 1,1× le temps d'une conversion globale, pour des
+notes identiques. Ce surcoût achète deux choses : l'affichage en direct dès
+qu'une page est prête, et l'envoi au VLM des seules pages faibles. Sur un
+rapport de quatre pages dont une est faible, cela représente une page à
+Nanonets au lieu de quatre — soit environ 15 s au lieu de 60 s.
+
+Quand le nombre de pages d'un PDF ne peut pas être lu à l'avance, le document
+est converti d'un bloc puis découpé par page, ce qui conserve la note de
+chaque page et donc la bascule.
+
+### Seuil de bascule
+
+Docling classe les notes ainsi : `poor` sous 0,5, `fair` sous 0,8, `good` sous
+0,9, `excellent` au-delà. Une page part aussi au VLM si sa conversion échoue
+ou si elle rend moins de 40 caractères.
+
+La sortie du VLM remplace celle du pipeline standard sauf si elle boucle
+(lignes ou motifs répétés, volume anormal) ou ne rend presque rien.
+
+### Déduplication des en-têtes et pieds de page
+
+Les pages étant converties séparément, chacune rapporte l'en-tête et le pied
+du document. Concaténées telles quelles, ces lignes reviennent autant de fois
+qu'il y a de pages.
+
+Le critère retenu est la fréquence **entre les pages**, pas la position dans
+la page : après remise en ordre de lecture, Docling place souvent l'en-tête au
+milieu du Markdown. Une ligne vue sur au moins 60 % des pages d'un document
+d'au moins trois pages est tenue pour un en-tête ou un pied ; sa première
+occurrence est conservée, les suivantes sont retirées. Les lignes de tableau
+sont épargnées : deux pages peuvent légitimement porter la même donnée.
+
+Mesuré sur un compte rendu de laboratoire de treize pages : 276 lignes
+retirées sur 691, soit 18 % de caractères en moins, sans perte de contenu.
+Sur une facture d'une page, rien n'est retiré.
+
+### Traitement des images
+
+Les formats que Docling ne lit pas (`jp2`, `gif`) sont transcodés en PNG dans
+le dossier temporaire de la session. Les images dont le plus grand côté
+dépasse 3000 px sont rééchantillonnées : l'OCR les agrandit ensuite d'un
+facteur 3, ce qui dépasserait la protection de Pillow contre les images
+pièges. L'orientation EXIF des photos est appliquée au passage. Le fichier
+d'origine n'est jamais modifié.
+
+### Verrous réseau
+
+| Verrou | Ce qu'il bloque |
+|--------|-----------------|
+| `GRADIO_ANALYTICS_ENABLED=False` et `analytics_enabled=False` | Gradio poste sinon vers `api.gradio.app`, contrôle de version compris |
+| Police système, jamais `gr.themes.GoogleFont` | le chargement de `fonts.googleapis.com` par le navigateur |
+| `server_name="127.0.0.1"`, `share=False` | toute écoute hors boucle locale, tout tunnel public |
+| `HF_HUB_OFFLINE=1`, imposé par `app.py` | tout appel au Hub depuis le serveur ; seul le processus de téléchargement des modèles, lancé à la main, y accède |
+| `enable_remote_services=False` | tout service d'inférence distant côté Docling |
+
+Ces affirmations se vérifient :
+
+```bash
+./lancer.sh &
+.venv/bin/python verifier_reseau.py mon_document.pdf
+```
+
+Le script lance une conversion réelle et échantillonne les connexions du
+processus serveur toutes les 0,4 s pendant toute sa durée, via `lsof`. Il
+signale toute connexion vers autre chose que la boucle locale.
