@@ -175,17 +175,21 @@ Ce qui est couvert :
 - **Aucune sortie réseau pendant la conversion**, mesurée et non supposée.
 - **Aucun service d'inférence distant** : `enable_remote_services=False`
   côté Docling, et les deux modèles tournent sur le GPU de la machine.
-- **Aucune trace persistante hors du dossier temporaire** : les images
-  normalisées et les Markdown produits vont dans un `mkdtemp`, et le
-  sous-dossier de travail est supprimé en fin de lot.
+- **Aucune trace laissée après la fermeture du serveur** : les copies des
+  documents déposés (cache de Gradio), les images normalisées, les Markdown
+  produits et l'archive vivent sous un unique dossier temporaire, supprimé
+  par le bouton **Fermer le serveur**, par Ctrl-C, par `kill` ou à la
+  fermeture du terminal.
 
 Ce qui ne l'est pas, et qu'il faut savoir :
 
 - Le **téléchargement initial des modèles** passe par Hugging Face. Il ne
   transmet aucun document, mais c'est le seul moment où la machine parle au
   réseau. Faites-le avant, une fois pour toutes.
-- Les **Markdown produits restent dans le dossier temporaire** du système
-  jusqu'au prochain redémarrage. Déplacez-les si le poste est partagé.
+- Les **Markdown produits disparaissent avec le serveur** : téléchargez-les
+  avant de le fermer. Un arrêt brutal (`kill -9`, coupure de courant) ne
+  laisse pas le temps de nettoyer ; le dossier `mac-docling-*` reste alors
+  dans le dossier temporaire du système.
 - Le chiffrement du disque et l'accès physique au poste relèvent de macOS,
   pas de cet outil.
 

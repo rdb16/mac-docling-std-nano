@@ -7,7 +7,20 @@ Docling n'appelle aucun service d'inférence distant.
 
 from __future__ import annotations
 
+import atexit
+import base64
+import html
+import logging
 import os
+import shutil
+import signal
+import sys
+import tempfile
+import threading
+import time
+import zipfile
+from collections.abc import Iterator
+from pathlib import Path
 
 # Doit précéder l'import de gradio : la télémétrie est active par défaut et
 # poste vers api.gradio.app, contrôle de version compris.
@@ -19,16 +32,24 @@ os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 # reste possible pour le téléchargement initial des poids.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-import base64  # noqa: E402
-import html  # noqa: E402
-import logging  # noqa: E402
-import shutil  # noqa: E402
-import tempfile  # noqa: E402
-import threading  # noqa: E402
-import time  # noqa: E402
-import zipfile  # noqa: E402
-from collections.abc import Iterator  # noqa: E402
-from pathlib import Path  # noqa: E402
+# Tout ce que la session écrit sur disque vit sous une seule racine : les
+# lots (images normalisées, Markdown, archive) et le cache de Gradio, qui
+# garde une copie de chaque document déposé. La racine est supprimée à la
+# fermeture du serveur. GRADIO_TEMP_DIR est imposé et non proposé : un cache
+# ailleurs laisserait les originaux sur le disque.
+RACINE_TEMP = Path(tempfile.mkdtemp(prefix="mac-docling-"))
+os.environ["GRADIO_TEMP_DIR"] = str(RACINE_TEMP / "gradio")
+
+
+def nettoyer() -> None:
+    """Supprime les documents déposés et tout ce qui en a été tiré."""
+    shutil.rmtree(RACINE_TEMP, ignore_errors=True)
+
+
+# Couvre l'arrêt par Ctrl-C ; SIGTERM (kill) et SIGHUP (terminal fermé) sont
+# convertis en sortie normale dans main() pour y passer aussi. Le bouton
+# « Fermer » appelle nettoyer() lui-même, os._exit court-circuitant atexit.
+atexit.register(nettoyer)
 
 import gradio as gr  # noqa: E402
 
@@ -269,7 +290,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
         yield vide
         return
 
-    dossier = Path(tempfile.mkdtemp(prefix="mac-docling-"))
+    dossier = Path(tempfile.mkdtemp(prefix="lot-", dir=RACINE_TEMP))
     travail = dossier / "travail"
 
     # On prépare tout d'abord pour connaître le nombre total de pages : la
@@ -406,6 +427,7 @@ def fermer_serveur():
     """Arrête le processus après avoir prévenu le navigateur."""
     def arret() -> None:
         time.sleep(0.8)
+        nettoyer()
         os._exit(0)
 
     threading.Thread(target=arret, daemon=True).start()
@@ -481,6 +503,8 @@ def construire() -> gr.Blocks:
 
 
 def main() -> None:
+    for signal_arret in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signal_arret, lambda *_: sys.exit(0))
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("docling").setLevel(logging.ERROR)
     favicon = ASSETS / "favicon.png"
