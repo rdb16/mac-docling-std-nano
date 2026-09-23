@@ -174,6 +174,9 @@ class Moteur:
         self.max_tokens_vlm = max_tokens_vlm
         self._standard = None
         self._nanonets = None
+        # Cause de l'échec de chargement du VLM : on ne retente pas à chaque
+        # page, il faut compléter le cache puis relancer le serveur.
+        self.nanonets_echec: str | None = None
 
     @staticmethod
     def _construire(options, vlm: bool):
@@ -206,9 +209,15 @@ class Moteur:
 
     def nanonets(self):
         if self._nanonets is None:
-            self._nanonets = self._construire(
-                _options_nanonets(self.max_tokens_vlm), vlm=True
-            )
+            if self.nanonets_echec:
+                raise RuntimeError(self.nanonets_echec)
+            try:
+                self._nanonets = self._construire(
+                    _options_nanonets(self.max_tokens_vlm), vlm=True
+                )
+            except Exception as err:
+                self.nanonets_echec = f"{type(err).__name__} — {err}"
+                raise
         return self._nanonets
 
     @property
@@ -250,6 +259,14 @@ def _confiance(resultat) -> dict:
     }
 
 
+def _vlm_indisponible(document: Document, moteur: Moteur) -> Evenement:
+    return Evenement(
+        Genre.ERREUR, document.nom,
+        f"Nanonets-OCR2 indisponible ({moteur.nanonets_echec}) : les pages "
+        "faibles restent en pipeline standard",
+    )
+
+
 def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
               routage_actif: bool = True,
               dedupliquer: bool = True) -> Iterator[Evenement]:
@@ -270,12 +287,18 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
     if not moteur.standard_charge:
         yield Evenement(Genre.MODELE, document.nom, "chargement du pipeline standard…")
         depart = time.perf_counter()
-        moteur.standard()
+        try:
+            moteur.standard()
+        except Exception as err:
+            yield Evenement(Genre.ERREUR, document.nom,
+                            f"pipeline standard indisponible : {type(err).__name__} — {err}")
+            return
         yield Evenement(Genre.MODELE, document.nom, "pipeline standard prêt",
                         {"ms": round((time.perf_counter() - depart) * 1000)})
 
     morceaux: list[str] = []
     pages_routees: list[int] = []
+    vlm_signale = False   # l'indisponibilité du VLM n'est dite qu'une fois
     total = max(document.pages, 1)
 
     for numero in range(1, total + 1):
@@ -306,7 +329,12 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
         motif = motif_bascule(reussi, resultat.status.value, confiance.get("note"),
                               seuil, markdown)
 
-        if routage_actif and motif:
+        if routage_actif and motif and moteur.nanonets_echec:
+            if not vlm_signale:
+                vlm_signale = True
+                yield _vlm_indisponible(document, moteur)
+
+        elif routage_actif and motif:
             yield Evenement(
                 Genre.PAGE_BASCULE, document.nom,
                 f"page {numero} : {motif} → Nanonets-OCR2",
@@ -319,7 +347,13 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                 yield Evenement(Genre.MODELE, document.nom,
                                 "chargement de Nanonets-OCR2…")
                 depart = time.perf_counter()
-                moteur.nanonets()
+                try:
+                    moteur.nanonets()
+                except Exception:
+                    vlm_signale = True
+                    yield _vlm_indisponible(document, moteur)
+                    morceaux.append(markdown)
+                    continue
                 yield Evenement(
                     Genre.MODELE, document.nom, "Nanonets-OCR2 prêt",
                     {"ms": round((time.perf_counter() - depart) * 1000)},

@@ -297,53 +297,70 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
         entete = f"### {index}/{len(documents)} · {document.nom}"
         lignes = []
         vues_standard: set[int] = set()
+        pages_avant = faites
+        termine = False
 
-        for evenement in convertir(document, MOTEUR, seuil, routage_actif,
-                                   dedupliquer):
-            donnees = evenement.donnees
+        # Une exception imprévue ne doit coûter que ce document, pas le lot.
+        try:
+            for evenement in convertir(document, MOTEUR, seuil, routage_actif,
+                                       dedupliquer):
+                donnees = evenement.donnees
 
-            if evenement.genre == Genre.DOCUMENT_DEBUT:
-                extra = " · image normalisée" if donnees.get("normalise") else ""
-                journal.append(f"{entete}\n{evenement.message}{extra}")
+                if evenement.genre == Genre.DOCUMENT_DEBUT:
+                    extra = " · image normalisée" if donnees.get("normalise") else ""
+                    journal.append(f"{entete}\n{evenement.message}{extra}")
 
-            elif evenement.genre == Genre.MODELE:
-                duree = f" ({_ms(donnees.get('ms'))})" if donnees.get("ms") else ""
-                journal.append(f"· {evenement.message}{duree}")
+                elif evenement.genre == Genre.MODELE:
+                    duree = f" ({_ms(donnees.get('ms'))})" if donnees.get("ms") else ""
+                    journal.append(f"· {evenement.message}{duree}")
 
-            elif evenement.genre == Genre.PAGE_FIN:
-                lignes = lignes + [_ligne_page(donnees)]
-                # L'avancement compte les pages, pas les passages : une page
-                # repassée au VLM ne la fait pas avancer deux fois.
-                if donnees["config"] == Config.STANDARD:
-                    numero = donnees["page"]
-                    if numero not in vues_standard:
-                        vues_standard.add(numero)
-                        faites += 1
-                if donnees.get("alerte"):
-                    journal.append(f"⚠ page {donnees['page']} : {donnees['alerte']}")
+                elif evenement.genre == Genre.PAGE_FIN:
+                    lignes = lignes + [_ligne_page(donnees)]
+                    # L'avancement compte les pages, pas les passages : une page
+                    # repassée au VLM ne la fait pas avancer deux fois.
+                    if donnees["config"] == Config.STANDARD:
+                        numero = donnees["page"]
+                        if numero not in vues_standard:
+                            vues_standard.add(numero)
+                            faites += 1
+                    if donnees.get("alerte"):
+                        journal.append(f"⚠ page {donnees['page']} : {donnees['alerte']}")
 
-            elif evenement.genre == Genre.PAGE_BASCULE:
-                journal.append(f"⚡ **{evenement.message}**")
+                elif evenement.genre == Genre.PAGE_BASCULE:
+                    journal.append(f"⚡ **{evenement.message}**")
 
-            elif evenement.genre == Genre.ERREUR:
-                journal.append(f"✗ {evenement.message}")
+                elif evenement.genre == Genre.ERREUR:
+                    journal.append(f"✗ {evenement.message}")
 
-            elif evenement.genre == Genre.DOCUMENT_FIN:
-                markdown_final = donnees["markdown"]
-                cible = dossier / f"{document.nom}.md"
-                cible.write_text(markdown_final, encoding="utf-8")
-                produits.append(cible)
-                routees = donnees["pages_routees"]
-                journal.append(
-                    f"✓ terminé en {_ms(donnees['ms'])} — "
-                    f"{donnees['caracteres']} caractères — "
-                    + (f"pages routées : {routees}" if routees
-                       else "aucune bascule nécessaire")
-                )
-                if evenement.message:
-                    journal.append(f"✂ {evenement.message}")
+                elif evenement.genre == Genre.DOCUMENT_FIN:
+                    termine = True
+                    markdown_final = donnees["markdown"]
+                    cible = dossier / f"{document.nom}.md"
+                    cible.write_text(markdown_final, encoding="utf-8")
+                    produits.append(cible)
+                    routees = donnees["pages_routees"]
+                    journal.append(
+                        f"✓ terminé en {_ms(donnees['ms'])} — "
+                        f"{donnees['caracteres']} caractères — "
+                        + (f"pages routées : {routees}" if routees
+                           else "aucune bascule nécessaire")
+                    )
+                    if evenement.message:
+                        journal.append(f"✂ {evenement.message}")
 
-            yield etat(f"{document.nom[:48]} — page {min(faites, total_pages)}")
+                yield etat(f"{document.nom[:48]} — page {min(faites, total_pages)}")
+        except Exception as err:
+            _log.exception("Conversion de %s interrompue", document.nom)
+            journal.append(f"✗ **{document.nom}** — conversion interrompue : "
+                           f"{type(err).__name__} — {err}")
+        else:
+            if not termine:
+                journal.append(f"✗ **{document.nom}** — document non converti")
+
+        # Les pages d'un document interrompu comptent comme traitées : la
+        # barre doit pouvoir atteindre la fin du lot.
+        faites = max(faites, pages_avant + max(document.pages, 1))
+        yield etat(f"{document.nom[:48]} — terminé")
 
     archive = None
     if len(produits) > 1:
