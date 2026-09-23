@@ -24,6 +24,9 @@ EXTENSIONS_REFUSEES = {
     ".heic": "HEIC refusé, trop volumineux : exportez la photo en JPEG",
     ".heif": "HEIF refusé, trop volumineux : exportez la photo en JPEG",
 }
+# Seuls les TIFF sont lus page par page : les images d'un GIF animé ne sont
+# pas des pages.
+EXTENSIONS_MULTIPAGES = {".tif", ".tiff"}
 EXTENSIONS_ACCEPTEES = EXTENSIONS_PDF | EXTENSIONS_IMAGE | EXTENSIONS_A_TRANSCODER
 
 # Un scan dépasse souvent 20 Mpx ; l'OCR le rééchantillonne ensuite d'un facteur
@@ -86,42 +89,67 @@ def detecter_type_pdf(chemin: Path) -> tuple[str, int]:
         backend.unload()
 
 
-def normaliser_image(source: Path, dossier_travail: Path) -> Path | None:
-    """Rend une image lisible par Docling sans toucher à la source."""
+def _redresser(image, nom: str):
+    """Une page prête pour l'OCR : orientée, en RGB, au plus COTE_MAX_IMAGE."""
     from PIL import Image, ImageOps
 
+    # Docling applique l'orientation EXIF aux images qu'il lit, mais le
+    # fichier réécrit ici perd l'EXIF : on tourne donc les pixels avant.
+    image = ImageOps.exif_transpose(image)
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    if max(image.size) > COTE_MAX_IMAGE:
+        # Dimensions relues : la rotation a pu échanger les côtés.
+        facteur = COTE_MAX_IMAGE / max(image.size)
+        taille = (round(image.width * facteur), round(image.height * facteur))
+        image = image.resize(taille, Image.LANCZOS)
+        _log.info("%s rééchantillonné en %dx%d", nom, *taille)
+    return image
+
+
+def normaliser_image(source: Path, dossier_travail: Path) -> tuple[Path, int] | None:
+    """Rend une image lisible par Docling sans toucher à la source.
+
+    Renvoie le fichier à convertir et son nombre de pages : un TIFF peut en
+    porter plusieurs, que Docling lit comme les pages d'un PDF.
+    """
+    from PIL import Image
+
+    multipage = source.suffix.lower() in EXTENSIONS_MULTIPAGES
     try:
         with Image.open(source) as image:
-            largeur, hauteur = image.size
+            pages = getattr(image, "n_frames", 1) if multipage else 1
+            cote_max = 0
+            for index in range(pages):
+                image.seek(index)
+                cote_max = max(cote_max, *image.size)
     except Exception as err:
         _log.error("Image illisible, %s ignoré : %s", source.name, err)
         return None
 
     lisible = source.suffix.lower() in EXTENSIONS_IMAGE
-    trop_grande = max(largeur, hauteur) > COTE_MAX_IMAGE
-    if lisible and not trop_grande:
-        return source
+    if lisible and cote_max <= COTE_MAX_IMAGE:
+        return source, pages
 
     dossier_travail.mkdir(parents=True, exist_ok=True)
-    cible = dossier_travail / f"{source.stem}.png"
     try:
         with Image.open(source) as image:
-            # Docling applique l'orientation EXIF aux images qu'il lit, mais le
-            # PNG réécrit ici perd l'EXIF : on tourne donc les pixels avant.
-            image = ImageOps.exif_transpose(image)
-            if image.mode not in ("RGB", "L"):
-                image = image.convert("RGB")
-            if trop_grande:
-                # Dimensions relues : la rotation a pu échanger les côtés.
-                facteur = COTE_MAX_IMAGE / max(image.size)
-                taille = (round(image.width * facteur), round(image.height * facteur))
-                image = image.resize(taille, Image.LANCZOS)
-                _log.info("%s rééchantillonné en %dx%d", source.name, *taille)
-            image.save(cible, format="PNG")
+            cadres = []
+            for index in range(pages):
+                image.seek(index)
+                cadres.append(_redresser(image, source.name))
+        # Le PNG ne porte qu'une image : plusieurs pages restent en TIFF.
+        if pages > 1:
+            cible = dossier_travail / f"{source.stem}.tif"
+            cadres[0].save(cible, format="TIFF", save_all=True,
+                           append_images=cadres[1:], compression="tiff_lzw")
+        else:
+            cible = dossier_travail / f"{source.stem}.png"
+            cadres[0].save(cible, format="PNG")
     except Exception as err:
         _log.error("Normalisation impossible pour %s : %s", source.name, err)
         return None
-    return cible
+    return cible, pages
 
 
 def preparer(chemin: Path, dossier_travail: Path) -> Document | None:
@@ -140,10 +168,11 @@ def preparer(chemin: Path, dossier_travail: Path) -> Document | None:
         return Document(nom, chemin, chemin, type_document, pages)
 
     if extension in EXTENSIONS_IMAGE | EXTENSIONS_A_TRANSCODER:
-        cible = normaliser_image(chemin, dossier_travail)
-        if cible is None:
+        normalisee = normaliser_image(chemin, dossier_travail)
+        if normalisee is None:
             return None
-        return Document(nom, chemin, cible, "image", 1, normalise=cible != chemin)
+        cible, pages = normalisee
+        return Document(nom, chemin, cible, "image", pages, normalise=cible != chemin)
 
     _log.info("Extension non gérée, %s ignoré", chemin.name)
     return None
