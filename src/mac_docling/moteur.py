@@ -243,9 +243,11 @@ def _etapes(resultat) -> dict[str, int]:
     return mesures
 
 
-def _confiance(resultat) -> dict:
-    """Note de la page : moyenne, mention, et détail par axe."""
-    confiance = getattr(resultat, "confidence", None)
+def _confiance(confiance) -> dict:
+    """Note d'une page : moyenne, mention, et détail par axe.
+
+    Accepte le rapport d'un résultat comme les scores d'une de ses pages.
+    """
     if confiance is None:
         return {}
     moyenne = _nombre(confiance.mean_score)
@@ -257,6 +259,86 @@ def _confiance(resultat) -> dict:
         "table": _nombre(confiance.table_score),
         "parse": _nombre(confiance.parse_score),
     }
+
+
+STATUTS_REUSSIS = ("success", "partial_success")
+
+
+@dataclass
+class _PageStandard:
+    """Ce que le pipeline standard a produit pour une page."""
+
+    numero: int
+    total: int
+    statut: str
+    markdown: str
+    confiance: dict
+    etapes: dict[str, int]
+    ms: int
+
+    @property
+    def reussi(self) -> bool:
+        return self.statut in STATUTS_REUSSIS
+
+
+def _pages_une_a_une(document: Document, moteur: Moteur
+                     ) -> Iterator[_PageStandard | Evenement]:
+    """Convertit chaque page séparément : le cas nominal."""
+    total = max(document.pages, 1)
+    for numero in range(1, total + 1):
+        depart = time.perf_counter()
+        try:
+            resultat = moteur.standard().convert(
+                document.chemin, raises_on_error=False, page_range=(numero, numero)
+            )
+        except Exception as err:
+            yield Evenement(Genre.ERREUR, document.nom,
+                            f"page {numero} : {type(err).__name__} — {err}",
+                            {"page": numero})
+            continue
+
+        statut = resultat.status.value
+        yield _PageStandard(
+            numero, total, statut,
+            resultat.document.export_to_markdown() if statut in STATUTS_REUSSIS else "",
+            _confiance(getattr(resultat, "confidence", None)),
+            _etapes(resultat),
+            round((time.perf_counter() - depart) * 1000),
+        )
+
+
+def _pages_globales(document: Document, moteur: Moteur
+                    ) -> Iterator[_PageStandard | Evenement]:
+    """Convertit le document d'un bloc, puis le découpe par page.
+
+    Sert quand l'inventaire n'a pas su compter les pages : sans nombre de
+    pages, la boucle page par page ne convertirait que la première. Le
+    découpage garde une note par page, donc le routage vers le VLM ; seuls
+    les temps, mesurés pour le document entier, sont répartis à parts égales.
+    """
+    depart = time.perf_counter()
+    resultat = moteur.standard().convert(document.chemin, raises_on_error=False)
+    duree = round((time.perf_counter() - depart) * 1000)
+
+    statut = resultat.status.value
+    total = resultat.document.num_pages() if resultat.document else 0
+    if not total:
+        yield Evenement(Genre.ERREUR, document.nom,
+                        f"conversion globale sans aucune page ({statut})")
+        return
+
+    yield Evenement(Genre.MODELE, document.nom,
+                    f"conversion globale : {total} page(s) trouvée(s)")
+    etapes = {nom: round(ms / total) for nom, ms in _etapes(resultat).items()}
+    rapport = getattr(resultat, "confidence", None)
+    for numero in range(1, total + 1):
+        yield _PageStandard(
+            numero, total, statut,
+            resultat.document.export_to_markdown(page_no=numero)
+            if statut in STATUTS_REUSSIS else "",
+            _confiance(rapport.pages.get(numero) if rapport else None),
+            etapes, round(duree / total),
+        )
 
 
 def _vlm_indisponible(document: Document, moteur: Moteur) -> Evenement:
@@ -275,9 +357,11 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
     Le Markdown final assemble les pages, chaque page routée étant remplacée
     par la sortie du VLM, puis retire les en-têtes et pieds de page répétés.
     """
+    decompte = (f"{document.pages} page(s)" if document.pages > 0
+                else "nombre de pages inconnu, conversion globale")
     yield Evenement(
         Genre.DOCUMENT_DEBUT, document.nom,
-        f"{document.type_document}, {document.pages} page(s)",
+        f"{document.type_document}, {decompte}",
         {"pages": document.pages, "type": document.type_document,
          "normalise": document.normalise},
     )
@@ -299,34 +383,26 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
     morceaux: list[str] = []
     pages_routees: list[int] = []
     vlm_signale = False   # l'indisponibilité du VLM n'est dite qu'une fois
-    total = max(document.pages, 1)
+    pages = (_pages_une_a_une(document, moteur) if document.pages > 0
+             else _pages_globales(document, moteur))
 
-    for numero in range(1, total + 1):
-        depart = time.perf_counter()
-        try:
-            resultat = moteur.standard().convert(
-                document.chemin, raises_on_error=False, page_range=(numero, numero)
-            )
-        except Exception as err:
-            yield Evenement(Genre.ERREUR, document.nom,
-                            f"page {numero} : {type(err).__name__} — {err}",
-                            {"page": numero})
+    for page in pages:
+        if isinstance(page, Evenement):
+            yield page
             continue
 
-        duree = round((time.perf_counter() - depart) * 1000)
-        reussi = resultat.status.value in ("success", "partial_success")
-        markdown = resultat.document.export_to_markdown() if reussi else ""
-        confiance = _confiance(resultat)
-
+        numero, total, markdown, confiance = (
+            page.numero, page.total, page.markdown, page.confiance
+        )
         yield Evenement(
             Genre.PAGE_FIN, document.nom, "",
             {"page": numero, "total": total, "config": Config.STANDARD,
-             "ms": duree, "etapes": _etapes(resultat),
+             "ms": page.ms, "etapes": page.etapes,
              "confiance": confiance, "caracteres": len(markdown),
-             "statut": resultat.status.value},
+             "statut": page.statut},
         )
 
-        motif = motif_bascule(reussi, resultat.status.value, confiance.get("note"),
+        motif = motif_bascule(page.reussi, page.statut, confiance.get("note"),
                               seuil, markdown)
 
         if routage_actif and motif and moteur.nanonets_echec:
@@ -367,7 +443,7 @@ def convertir(document: Document, moteur: Moteur, seuil: str = "fair",
                 )
                 markdown_vlm = (
                     vlm.document.export_to_markdown()
-                    if vlm.status.value in ("success", "partial_success") else ""
+                    if vlm.status.value in STATUTS_REUSSIS else ""
                 )
             except Exception as err:
                 markdown_vlm = ""

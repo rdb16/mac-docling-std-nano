@@ -298,6 +298,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
         lignes = []
         vues_standard: set[int] = set()
         pages_avant = faites
+        attendues = max(document.pages, 1)
         termine = False
 
         # Une exception imprévue ne doit coûter que ce document, pas le lot.
@@ -319,6 +320,11 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
                     # L'avancement compte les pages, pas les passages : une page
                     # repassée au VLM ne la fait pas avancer deux fois.
                     if donnees["config"] == Config.STANDARD:
+                        # Un PDF au nombre de pages inconnu ne le révèle
+                        # qu'une fois converti : on agrandit alors la barre.
+                        if donnees["total"] > attendues:
+                            total_pages += donnees["total"] - attendues
+                            attendues = donnees["total"]
                         numero = donnees["page"]
                         if numero not in vues_standard:
                             vues_standard.add(numero)
@@ -359,7 +365,7 @@ def traiter(fichiers, seuil, routage_actif, dedupliquer) -> Iterator[tuple]:
 
         # Les pages d'un document interrompu comptent comme traitées : la
         # barre doit pouvoir atteindre la fin du lot.
-        faites = max(faites, pages_avant + max(document.pages, 1))
+        faites = max(faites, pages_avant + attendues)
         yield etat(f"{document.nom[:48]} — terminé")
 
     archive = None
