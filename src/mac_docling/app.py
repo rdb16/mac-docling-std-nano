@@ -12,6 +12,12 @@ import os
 # Doit précéder l'import de gradio : la télémétrie est active par défaut et
 # poste vers api.gradio.app, contrôle de version compris.
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+# Doit précéder l'import de huggingface_hub, qui lit la variable une seule
+# fois : sans elle, chaque chargement de modèle interroge le Hub pour vérifier
+# les révisions. Posée ici et non seulement dans lancer.sh pour couvrir un
+# lancement direct (`uv run python -m mac_docling.app`). HF_HUB_OFFLINE=0
+# reste possible pour le téléchargement initial des poids.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import base64  # noqa: E402
 import html  # noqa: E402

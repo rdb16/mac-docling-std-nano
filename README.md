@@ -61,9 +61,11 @@ VIRTUAL_ENV=.venv uv pip install -e .
 
 ## Préchargement des modèles
 
-`lancer.sh` exporte `HF_HUB_OFFLINE=1`. Au lancement, plus rien n'est donc
-téléchargé : les poids doivent être présents **avant**, sinon la première
-conversion s'arrête sur une erreur au lieu d'attendre. Comptez environ 8 Go.
+L'application positionne `HF_HUB_OFFLINE=1` par défaut, qu'on la lance par
+`lancer.sh` ou directement. Au lancement, plus rien n'est donc téléchargé :
+les poids doivent être présents **avant**. Sans le pipeline standard, les
+documents échouent un à un ; sans Nanonets-OCR2, les pages faibles restent
+en pipeline standard et le journal le signale. Comptez environ 8 Go.
 
 Les trois dépôts sont publics, aucune authentification Hugging Face n'est
 nécessaire :
